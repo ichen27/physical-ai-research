@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+# Isaac Lab training output. Selected results are copied into results/ deliberately.
+logs/
+outputs/
+# Local arm calibration is specific to one physical arm.
+calibration.local.json
