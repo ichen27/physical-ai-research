@@ -11,15 +11,17 @@ This is an early project. Read this section before relying on anything.
 | Part | State |
 | --- | --- |
 | Arm description, unit conversions, calibration format | Working, tested |
-| Forward kinematics read from the vendor URDF | Working, tested |
-| Isaac Lab reach task (`understudy_isaac/`) | Written against Isaac Lab 3.0.0-beta2 source. **Not yet run.** |
-| Trained reach policy and its measured success rate | Not done |
-| Real-arm runner | Not done |
+| Forward kinematics read from the vendor URDF | Working, tested. Matches the simulator to 0.00 mm |
+| Isaac Lab reach task (`understudy_isaac/`) | Working in Isaac Lab 3.0.0 |
+| Trained reach policy | Trained and measured **in simulation only**. See [results](results/reach/2026-11-24-baseline/README.md) |
+| Real-arm runner and calibration capture | Not done |
 | Cube lift with a camera | Not started |
+
+In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
 
 Known limitations:
 
-- The simulated servo stiffness and damping in `understudy/arm.py` are estimates from the servo data sheets. They have not been measured on a real arm, and a policy trained on wrong values may not transfer.
+- The simulated servo stiffness and damping in `understudy/arm.py` are estimates from the servo data sheets. They have not been measured on a real arm. The policy is not yet trained across a range of stiffness, so it loses accuracy when the servos differ.
 - An arm set up through LeRobot has its own encoder offsets. It needs a calibration file (see [Calibration](#calibration)) before any policy output is sent to it.
 - The joint limits are a conservative choice for one arm on a clear desk. Check them against your own setup.
 
@@ -30,7 +32,12 @@ Known limitations:
 | `understudy/arm.py` | Joint order, limits, servo assumptions, tick and radian conversion, calibration |
 | `understudy/kinematics.py` | Gripper-tip position from joint angles, read from the URDF |
 | `understudy_isaac/` | Isaac Lab task and training settings. Needs Isaac Lab |
+| `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
+| `scripts/check_sim_model.py` | Checks the simulated arm's masses, limits and kinematics against the shared description |
+| `scripts/evaluate.py` | Scores a trained policy on thousands of reaches and exports it |
+| `results/` | Trained policies and their measurements |
+| `assets/generated/` | The generated simulation URDF |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
 | `tests/` | Checks that run without a simulator or an arm |
 | `ci/run.sh` | The one validation command, used locally and in CI |
@@ -66,12 +73,20 @@ This prints the tip position in metres in the arm's base frame, about `(0.195, -
 
 ## Training in Isaac Lab
 
-Not yet verified. On a machine with Isaac Lab, from this repository:
+Verified with Isaac Lab 3.0.0 on one NVIDIA L40S. On a machine with Isaac Lab, from this repository:
 
 ```sh
 export ISAACLAB_PATH=/path/to/IsaacLab
+
+# Check the simulated arm against the shared description (masses, limits, kinematics).
+$ISAACLAB_PATH/isaaclab.sh -p scripts/check_sim_model.py --headless
+
+# Train. About ten minutes for 1,000 iterations with 4,096 simulated arms.
 $ISAACLAB_PATH/isaaclab.sh -p scripts/isaaclab_run.py train --task Understudy-Reach-OMX-v0 --headless
-$ISAACLAB_PATH/isaaclab.sh -p scripts/isaaclab_run.py play --task Understudy-Reach-OMX-Play-v0
+
+# Score the result on 5,000 reaches and export the policy.
+$ISAACLAB_PATH/isaaclab.sh -p scripts/evaluate.py --headless \
+    --checkpoint logs/rsl_rl/understudy_reach_omx/<run>/model_999.pt --output results/reach/<name>
 ```
 
 The task: the gripper tip must reach a random point in a 14 × 24 × 18 cm box in front of the arm. A reach counts as a success within 2 cm. The policy sees five joint angles, five joint velocities, the target and its own last action, and outputs five joint position targets at 30 Hz.
@@ -92,11 +107,15 @@ The task: the gripper tip must reach a random point in a 14 × 24 × 18 cm box i
 bash ci/run.sh
 ```
 
-This runs the unit tests and compiles every Python file. It does not start a simulator or touch hardware. The Isaac Lab task has no automated check yet.
+This runs the unit tests and compiles every Python file. It does not start a simulator or touch hardware. The Isaac Lab task is checked by hand with `scripts/check_sim_model.py` and `scripts/evaluate.py` on a GPU machine; CI does not run them.
 
 ## Results and artifacts
 
-None yet. Trained policies, training curves, evaluation numbers and videos will be added under `results/` with an index here.
+| Run | What it is | Contents |
+| --- | --- | --- |
+| [Reach baseline, 2026-11-24](results/reach/2026-11-24-baseline/README.md) | First reach policy, simulation only | Exported policy (ONNX and TorchScript), training checkpoint, run settings, training curves, five evaluation files |
+
+No demonstration video yet.
 
 ## Contributing
 

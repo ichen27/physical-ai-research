@@ -7,3 +7,5 @@ logs/
 outputs/
 # Local arm calibration is specific to one physical arm.
 calibration.local.json
+# Recordings are added deliberately once they are worth showing.
+results/**/*.mp4
