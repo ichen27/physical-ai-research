@@ -10,7 +10,11 @@ commit `0f18f88238adceae951493750d2295d3b02a471b`, directory `open_manipulator_d
 - `meshes/omx_f/*.stl`
 - `mujoco/omx/omx.xml`, `mujoco/omx/scene.xml`
 
-They are licensed under the Apache License 2.0. A copy of that license is at
+`assets/generated/omx_f_sim.urdf` is a modified copy of that URDF, produced by
+`understudy/sim_urdf.py`. The changes are narrower joint limits and a negligible
+mass on links that had none; the file's header states this.
+
+All of these are licensed under the Apache License 2.0. A copy of that license is at
 `assets/open_manipulator_description/LICENSE`.
 
 Servo settings quoted in `understudy/arm.py` and the tests (position limits, gains,

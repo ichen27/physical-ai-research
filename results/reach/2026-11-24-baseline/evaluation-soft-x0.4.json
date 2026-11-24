@@ -1,0 +1,17 @@
+{
+  "task": "Understudy-Reach-OMX-Play-v0",
+  "checkpoint": "logs/rsl_rl/understudy_reach_omx/2026-11-24_20-15-33/model_999.pt",
+  "reaches_scored": 5000,
+  "hold_seconds": 4.0,
+  "scored_over_final_seconds": 0.5,
+  "observation_noise": false,
+  "servo_stiffness_scale": 0.4,
+  "seed": 7,
+  "success_radius_m": 0.02,
+  "success_rate": 1.0,
+  "success_rate_within_1cm": 0.9258000254631042,
+  "success_rate_within_5cm": 1.0,
+  "median_error_m": 0.007415026426315308,
+  "p95_error_m": 0.010256967507302761,
+  "max_error_m": 0.014396809041500092
+}

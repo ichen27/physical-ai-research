@@ -1,0 +1,1 @@
+# The library and its tests use only the Python standard library.
