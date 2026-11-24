@@ -56,7 +56,7 @@ Input, 22 numbers in this order:
 
 1. Five arm joint angles minus the default pose in `understudy/arm.py`, radians.
 2. Five arm joint velocities, radians per second.
-3. The target: position in metres in the arm base frame, then the orientation quaternion the simulator supplies for a zero rotation. The quaternion is constant. Its component order must be confirmed against the simulator before the real-arm runner is written.
+3. The target: position in metres in the arm base frame, then the quaternion `0, 0, 0, 1`, which is constant (confirmed against the simulator).
 4. The previous five outputs.
 
 Output: five numbers. The joint position target is `default + 0.5 × output`, clamped to the joint limits, sent at 30 Hz.

@@ -1,0 +1,17 @@
+{
+  "task": "Understudy-Pickup-Ball-OMX-Play-v0",
+  "checkpoint": "logs/rsl_rl/understudy_pickup_omx/2026-11-24_21-10-01/model_1499.pt",
+  "attempts_scored": 5000,
+  "attempt_seconds": 5.0,
+  "scored_over_final_seconds": 0.5,
+  "observation_noise": false,
+  "servo_stiffness_scale": 1.0,
+  "ball_friction": 1.0,
+  "seed": 7,
+  "lifted_height_m": 0.05,
+  "hold_radius_m": 0.03,
+  "success_rate": 0.2295999974012375,
+  "lifted_rate": 0.9995999932289124,
+  "median_final_ball_height_m": 0.134399875998497,
+  "median_distance_to_target_when_lifted_m": 0.044017259031534195
+}

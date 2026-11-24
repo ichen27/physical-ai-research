@@ -2,6 +2,8 @@
 
 Train a small robot arm in simulation, then run the trained policy on the real arm.
 
+![The simulated arm picking up a ball](results/pickup/2026-11-24-first/pickup-frames.png)
+
 The arm is the ROBOTIS OMX follower (five joints plus a gripper, DYNAMIXEL XL430 and XL330 servos). Policies are trained with reinforcement learning in NVIDIA Isaac Lab on a rented GPU and are meant to run on the physical arm from a laptop.
 
 ## Status
@@ -14,10 +16,14 @@ This is an early project. Read this section before relying on anything.
 | Forward kinematics read from the vendor URDF | Working, tested. Matches the simulator to 0.00 mm |
 | Isaac Lab reach task (`understudy_isaac/`) | Working in Isaac Lab 3.0.0 |
 | Trained reach policy | Trained and measured **in simulation only**. See [results](results/reach/2026-11-24-baseline/README.md) |
+| Ball pickup task | Working in Isaac Lab 3.0.0 |
+| Trained pickup policy | Trained and measured **in simulation only**. See [results](results/pickup/2026-11-24-first/README.md) |
 | Real-arm runner and calibration capture | Not done |
-| Cube lift with a camera | Not started |
+| Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
+
+The pickup policy lifts a foam golf ball off the desk in 5,000 of 5,000 simulated attempts and holds it within 3 cm of a target point in 89% of them. It is not ready for hardware: with arm servos six times stiffer than it was trained on, which is a plausible value for the real arm, it lifts the ball in only 6% of attempts.
 
 Known limitations:
 
@@ -32,10 +38,13 @@ Known limitations:
 | `understudy/arm.py` | Joint order, limits, servo assumptions, tick and radian conversion, calibration |
 | `understudy/kinematics.py` | Gripper-tip position from joint angles, read from the URDF |
 | `understudy_isaac/` | Isaac Lab task and training settings. Needs Isaac Lab |
+| `understudy/pickup.py` | The ball, the gripper commands and the success criteria for the pickup task |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
 | `scripts/check_sim_model.py` | Checks the simulated arm's masses, limits and kinematics against the shared description |
-| `scripts/evaluate.py` | Scores a trained policy on thousands of reaches and exports it |
+| `scripts/check_pickup_scene.py` | Runs a fixed, unlearned grasp to confirm the simulated gripper can hold the ball |
+| `scripts/evaluate.py` | Scores a trained reach policy on thousands of reaches and exports it |
+| `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -89,7 +98,20 @@ $ISAACLAB_PATH/isaaclab.sh -p scripts/evaluate.py --headless \
     --checkpoint logs/rsl_rl/understudy_reach_omx/<run>/model_999.pt --output results/reach/<name>
 ```
 
-The task: the gripper tip must reach a random point in a 14 × 24 × 18 cm box in front of the arm. A reach counts as a success within 2 cm. The policy sees five joint angles, five joint velocities, the target and its own last action, and outputs five joint position targets at 30 Hz.
+The reach task: the gripper tip must reach a random point in a 14 × 24 × 18 cm box in front of the arm. A reach counts as a success within 2 cm. The policy sees five joint angles, five joint velocities, the target and its own last action, and outputs five joint position targets at 30 Hz.
+
+The pickup task uses the same scripts with its own task name. A foam golf ball starts at rest in a 6 × 12 cm area in front of the arm, and the arm must lift it and hold it at a target point 10–16 cm above the desk within five seconds. Expect about an hour of training.
+
+```sh
+# Confirm the simulated gripper can physically hold the ball, with no learning involved.
+$ISAACLAB_PATH/isaaclab.sh -p scripts/check_pickup_scene.py --headless
+
+$ISAACLAB_PATH/isaaclab.sh -p scripts/isaaclab_run.py train --task Understudy-Pickup-Ball-OMX-v0 --headless
+$ISAACLAB_PATH/isaaclab.sh -p scripts/evaluate_pickup.py --headless \
+    --checkpoint logs/rsl_rl/understudy_pickup_omx/<run>/model_1499.pt --output results/pickup/<name>
+```
+
+In the pickup task the ball's position is read from the simulator. On a real arm it would have to come from a camera, which is not built.
 
 ## Calibration
 
@@ -107,15 +129,14 @@ The task: the gripper tip must reach a random point in a 14 × 24 × 18 cm box i
 bash ci/run.sh
 ```
 
-This runs the unit tests and compiles every Python file. It does not start a simulator or touch hardware. The Isaac Lab task is checked by hand with `scripts/check_sim_model.py` and `scripts/evaluate.py` on a GPU machine; CI does not run them.
+This runs the unit tests and compiles every Python file. It does not start a simulator or touch hardware. The Isaac Lab tasks are checked by hand with the `scripts/check_*.py` and `scripts/evaluate*.py` scripts on a GPU machine; CI does not run them.
 
 ## Results and artifacts
 
 | Run | What it is | Contents |
 | --- | --- | --- |
 | [Reach baseline, 2026-11-24](results/reach/2026-11-24-baseline/README.md) | First reach policy, simulation only | Exported policy (ONNX and TorchScript), training checkpoint, run settings, training curves, five evaluation files |
-
-No demonstration video yet.
+| [Ball pickup, first policy, 2026-11-24](results/pickup/2026-11-24-first/README.md) | First pickup policy, simulation only | Video and still frames, exported policy, training checkpoint, run settings, training curves, seven evaluation files |
 
 ## Contributing
 
