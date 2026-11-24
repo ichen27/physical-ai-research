@@ -70,6 +70,8 @@ class OmxReachEnvCfg_PLAY(OmxReachEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 50
         # The arm is small; bring the camera in from the larger arms' default.
+        self.viewer.origin_type = "env"
+        self.viewer.env_index = 0
         self.viewer.eye = (0.55, 0.55, 0.45)
         self.viewer.lookat = (0.12, 0.0, 0.10)
         self.observations.policy.enable_corruption = False

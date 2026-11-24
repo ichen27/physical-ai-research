@@ -12,7 +12,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-from understudy import arm
+from understudy import arm, pickup
 from understudy.sim_urdf import SIM_URDF
 
 _DESCRIPTION = Path(__file__).resolve().parent.parent / "assets" / "open_manipulator_description"
@@ -50,6 +50,13 @@ OMX_F_CFG = ArticulationCfg(
     actuators={
         "xl430": _actuator([j.name for j in arm.ARM_JOINTS if j.servo is arm.XL430], arm.XL430),
         "xl330": _actuator([j.name for j in arm.ARM_JOINTS if j.servo is arm.XL330], arm.XL330),
-        "gripper": _actuator(list(arm.GRIPPER_JOINT_NAMES), arm.XL330),
+        "gripper": ImplicitActuatorCfg(
+            joint_names_expr=list(arm.GRIPPER_JOINT_NAMES),
+            stiffness=arm.XL330.stiffness,
+            damping=arm.XL330.damping,
+            armature=0.0003,
+            effort_limit_sim=pickup.GRIPPER_FINGER_TORQUE,
+            velocity_limit_sim=arm.XL330.max_velocity,
+        ),
     },
 )

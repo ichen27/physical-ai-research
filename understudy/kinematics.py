@@ -113,6 +113,18 @@ class Chain:
 
     def tip_position(self, angles: list[float] | tuple[float, ...]) -> tuple[float, float, float]:
         """Gripper-tip position in the arm base frame, in metres."""
+        pose = self.tip_transform(angles)
+        return (pose[0][3], pose[1][3], pose[2][3])
+
+    def point_in_tip_frame(
+        self, angles: list[float] | tuple[float, ...], offset: tuple[float, float, float]
+    ) -> tuple[float, float, float]:
+        """Position in the base frame of a point given in the gripper-tip frame."""
+        pose = self.tip_transform(angles)
+        return tuple(sum(pose[i][k] * offset[k] for k in range(3)) + pose[i][3] for i in range(3))  # type: ignore[return-value]
+
+    def tip_transform(self, angles: list[float] | tuple[float, ...]) -> Matrix:
+        """Gripper-tip pose in the arm base frame as a 4x4 matrix."""
         if len(angles) != len(ARM_JOINT_NAMES):
             raise ValueError(f"expected {len(ARM_JOINT_NAMES)} joint angles, got {len(angles)}")
         remaining = iter(angles)
@@ -121,7 +133,7 @@ class Chain:
             pose = _matmul(pose, joint.origin)
             if joint.kind != "fixed":
                 pose = _matmul(pose, _axis_rotation(joint.axis, next(remaining)))
-        return (pose[0][3], pose[1][3], pose[2][3])
+        return pose
 
 
 def distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
