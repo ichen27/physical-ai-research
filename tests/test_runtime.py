@@ -1,0 +1,62 @@
+import unittest
+
+from understudy import arm, pickup, runtime
+
+
+class ObservationTests(unittest.TestCase):
+    def test_layout(self):
+        observation = runtime.build_observation(
+            joint_angles=list(runtime.SENSED_START),
+            joint_velocities=[0.1] * 6,
+            ball_position=[0.2, 0.01, 0.021],
+            hold_target=[0.18, 0.0, 0.12],
+            previous_action=[1, 2, 3, 4, 5, -1],
+        )
+        self.assertEqual(len(observation), runtime.OBSERVATION_SIZE)
+        self.assertEqual(observation[0:6], [0.0] * 6)  # at the start pose
+        self.assertEqual(observation[6:12], [0.1] * 6)
+        self.assertEqual(observation[12:15], [0.2, 0.01, 0.021])
+        self.assertEqual(observation[15:22], [0.18, 0.0, 0.12, 0.0, 0.0, 0.0, 1.0])
+        self.assertEqual(observation[22:28], [1.0, 2.0, 3.0, 4.0, 5.0, -1.0])
+
+    def test_joint_angles_are_relative_to_the_start_pose(self):
+        angles = [a + 0.1 for a in runtime.SENSED_START]
+        observation = runtime.build_observation(angles, [0] * 6, [0] * 3, [0] * 3, [0] * 6)
+        for value in observation[0:6]:
+            self.assertAlmostEqual(value, 0.1)
+
+    def test_rejects_wrong_sizes(self):
+        with self.assertRaises(ValueError):
+            runtime.build_observation([0] * 5, [0] * 6, [0] * 3, [0] * 3, [0] * 6)
+        with self.assertRaises(ValueError):
+            runtime.build_observation([0] * 6, [0] * 6, [0] * 2, [0] * 3, [0] * 6)
+
+
+class ActionTests(unittest.TestCase):
+    def test_zero_action_holds_the_start_pose_with_the_gripper_open(self):
+        command = runtime.decode_action([0.0] * 6)
+        self.assertEqual(command.arm_targets, pickup.START_POSE)
+        self.assertTrue(command.gripper_open)
+        self.assertEqual(command.finger_target, pickup.GRIPPER_OPEN_RAD)
+
+    def test_scale_and_gripper_sign(self):
+        command = runtime.decode_action([0.2, 0.0, 0.0, 0.0, 0.0, -0.01])
+        self.assertAlmostEqual(command.arm_targets[0], pickup.START_POSE[0] + 0.1)
+        self.assertFalse(command.gripper_open)
+        self.assertEqual(command.finger_target, pickup.GRIPPER_CLOSED_RAD)
+
+    def test_targets_never_leave_the_trained_limits(self):
+        for sign in (1.0, -1.0):
+            command = runtime.decode_action([sign * 100.0] * 5 + [1.0])
+            for target, joint in zip(command.arm_targets, arm.ARM_JOINTS):
+                self.assertTrue(joint.lower <= target <= joint.upper)
+
+    def test_rejects_bad_actions(self):
+        with self.assertRaises(ValueError):
+            runtime.decode_action([0.0] * 5)
+        with self.assertRaises(ValueError):
+            runtime.decode_action([float("nan")] + [0.0] * 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

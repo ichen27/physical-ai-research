@@ -11,6 +11,8 @@ class OmxBallPickupPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 50
     experiment_name = "understudy_pickup_omx"
     run_name = ""
+    # The value estimate sees the scene without camera error; the policy does not.
+    obs_groups = {"actor": ["policy"], "critic": ["critic"]}
     actor = RslRlMLPModelCfg(
         hidden_dims=[256, 128, 64],
         activation="elu",

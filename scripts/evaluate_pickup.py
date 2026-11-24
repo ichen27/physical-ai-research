@@ -1,5 +1,9 @@
 """Measure how often a trained policy picks up the ball, and export it.
 
+By default every simulated arm, ball and camera differs as in training
+(see understudy/variation.py). The options pin one property to a single value
+to show how the policy copes with it.
+
 An attempt is scored over its final half second. It is a success only if,
 averaged over that time, the ball is off the desk and within the hold radius of
 the target. Touching the target briefly and dropping the ball does not count.
@@ -25,15 +29,15 @@ parser.add_argument("--output", required=True, help="Directory for the exported 
 parser.add_argument("--num_envs", type=int, default=1024)
 parser.add_argument("--attempts", type=int, default=5000, help="Number of scored pickup attempts.")
 parser.add_argument("--seed", type=int, default=7)
-parser.add_argument("--noise", action="store_true", help="Keep training-time observation noise on.")
 parser.add_argument(
     "--stiffness_scale",
     type=float,
-    default=1.0,
-    help="Multiply the simulated arm servo stiffness, keeping the damping ratio, to test sensitivity.",
+    default=None,
+    help="Give every arm this multiple of the vendor-model servo stiffness instead of a varied one.",
 )
-parser.add_argument("--ball_friction", type=float, default=None, help="Override the ball's friction coefficient.")
-parser.add_argument("--ball_mass", type=float, default=None, help="Override the ball's mass in kilograms.")
+parser.add_argument("--ball_bias", type=float, default=None, help="Camera calibration error in metres, each axis.")
+parser.add_argument("--ball_friction", type=float, default=None, help="Give every ball this friction coefficient.")
+parser.add_argument("--ball_mass", type=float, default=None, help="Give every ball this mass in kilograms.")
 parser.add_argument("--result_name", default="evaluation", help="File name (without .json) for the results.")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -43,7 +47,7 @@ import torch  # noqa: E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
 import understudy_isaac  # noqa: E402
-from understudy import arm, pickup  # noqa: E402
+from understudy import arm, pickup, variation  # noqa: E402
 from understudy_isaac.policy_io import load_policy  # noqa: E402
 
 FINAL_WINDOW_STEPS = int(0.5 * arm.CONTROL_HZ)
@@ -53,18 +57,22 @@ def main() -> None:
     task = understudy_isaac.PICKUP_TASK_PLAY
     env_cfg = parse_env_cfg(task, device=args.device, num_envs=args.num_envs)
     env_cfg.seed = args.seed
-    env_cfg.observations.policy.enable_corruption = args.noise
-    if args.stiffness_scale <= 0:
-        raise SystemExit("--stiffness_scale must be positive")
-    for name in ("xl430", "xl330"):
-        actuator = env_cfg.scene.robot.actuators[name]
-        actuator.stiffness = actuator.stiffness * args.stiffness_scale
-        actuator.damping = actuator.damping * args.stiffness_scale**0.5
+    env_cfg.observations.policy.enable_corruption = True
+    if args.stiffness_scale is not None:
+        if args.stiffness_scale <= 0:
+            raise SystemExit("--stiffness_scale must be positive")
+        env_cfg.events.servo_gains = None
+        servos = env_cfg.scene.robot.actuators["arm"]
+        servos.stiffness = {name: value * args.stiffness_scale for name, value in servos.stiffness.items()}
+        servos.damping = {name: value * args.stiffness_scale**0.5 for name, value in servos.damping.items()}
+    if args.ball_bias is not None:
+        env_cfg.observations.policy.object_position.params["bias"] = args.ball_bias
     if args.ball_friction is not None:
+        env_cfg.events.ball_friction = None
         material = env_cfg.scene.object.spawn.physics_material
         material.static_friction = material.dynamic_friction = args.ball_friction
-
     if args.ball_mass is not None:
+        env_cfg.events.ball_mass = None
         env_cfg.scene.object.spawn.mass_props.mass = args.ball_mass
 
     output = Path(args.output)
@@ -106,10 +114,10 @@ def main() -> None:
         "attempts_scored": int(height.numel()),
         "attempt_seconds": pickup.EPISODE_SECONDS,
         "scored_over_final_seconds": FINAL_WINDOW_STEPS / arm.CONTROL_HZ,
-        "observation_noise": bool(args.noise),
-        "servo_stiffness_scale": args.stiffness_scale,
-        "ball_friction": args.ball_friction if args.ball_friction is not None else pickup.BALL_FRICTION,
-        "ball_mass_kg": args.ball_mass if args.ball_mass is not None else pickup.BALL_MASS_KG,
+        "servo_stiffness_scale": args.stiffness_scale if args.stiffness_scale is not None else "varied",
+        "camera_bias_m": args.ball_bias if args.ball_bias is not None else variation.BALL_POSITION_BIAS_M,
+        "ball_friction": args.ball_friction if args.ball_friction is not None else "varied",
+        "ball_mass_kg": args.ball_mass if args.ball_mass is not None else "varied",
         "seed": args.seed,
         "lifted_height_m": pickup.LIFTED_HEIGHT_M,
         "hold_radius_m": pickup.HOLD_RADIUS_M,

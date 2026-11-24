@@ -10,6 +10,7 @@ Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is 
 
 - `understudy/` is pure Python with no third-party imports. It is the single source of truth for joint order, limits, servo assumptions, unit conversions and kinematics. Both the simulator task and the real-arm runner import it. Do not duplicate these values elsewhere.
 - `understudy_isaac/` holds everything that imports Isaac Lab. Its `__init__.py` must not import Isaac Lab, because task registration happens before the simulator starts.
+- Task configuration files (`*_env_cfg.py`, `*_cfg.py`) are also loaded before the simulator starts. They may import Isaac Lab configuration classes but not modules that pull in the simulator, such as action or asset implementations. Name an implementation class by string in its configuration, as `servo_action_cfg.py` does. Getting this wrong crashes the simulator at startup with `free(): invalid pointer`.
 - `assets/open_manipulator_description/` is vendored from ROBOTIS under Apache-2.0. Do not edit those files. Record the upstream commit in `THIRD_PARTY_NOTICES.md` when updating them.
 - Observations the policy receives in simulation must be obtainable on the real arm. Do not add simulator-only state to the policy observation.
 

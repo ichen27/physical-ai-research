@@ -2,7 +2,8 @@
 
 The ball is a foam practice golf ball. Its diameter is the standard golf ball
 size; its mass, friction and damping are assumptions about foam on a desk and
-have not been measured.
+have not been measured. Training varies the mass and friction
+(see understudy/variation.py); the values here are the middle of the road.
 """
 
 from __future__ import annotations
@@ -18,9 +19,6 @@ BALL_ANGULAR_DAMPING = 2.0
 # At 1.0 rad the fingers are about 80 mm apart where the ball sits.
 GRIPPER_OPEN_RAD = 1.0
 GRIPPER_CLOSED_RAD = 0.0
-# One servo drives both fingers through gears, limited to about 0.2 N*m in the
-# vendor model, so each finger can press with about half of that.
-GRIPPER_FINGER_TORQUE = 0.1
 
 # Arm pose each attempt starts from: gripper open, about 12 cm above the desk.
 START_POSE = (0.0, -0.6, 0.5, 1.2, 0.0)

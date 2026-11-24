@@ -35,7 +35,7 @@ parser.add_argument(
     "--stiffness_scale",
     type=float,
     default=1.0,
-    help="Multiply the simulated arm servo stiffness, keeping the damping ratio, to test sensitivity.",
+    help="Multiply the vendor-model arm servo stiffness, keeping the damping ratio, to test sensitivity.",
 )
 parser.add_argument("--result_name", default="evaluation", help="File name (without .json) for the results.")
 AppLauncher.add_app_launcher_args(parser)
@@ -59,10 +59,10 @@ def main() -> None:
     env_cfg.observations.policy.enable_corruption = args.noise
     if args.stiffness_scale <= 0:
         raise SystemExit("--stiffness_scale must be positive")
-    for name in ("xl430", "xl330"):
-        actuator = env_cfg.scene.robot.actuators[name]
-        actuator.stiffness = actuator.stiffness * args.stiffness_scale
-        actuator.damping = actuator.damping * args.stiffness_scale**0.5
+    servos = env_cfg.scene.robot.actuators["arm"]
+    servos.stiffness = {name: value * args.stiffness_scale for name, value in servos.stiffness.items()}
+    servos.damping = {name: value * args.stiffness_scale**0.5 for name, value in servos.damping.items()}
+
     output = Path(args.output)
     env, policy = load_policy(task, env_cfg, args.checkpoint, output)
 

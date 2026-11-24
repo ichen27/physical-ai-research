@@ -1,10 +1,10 @@
-"""Reward terms specific to the ball pickup task."""
+"""Observation and reward terms specific to the ball pickup task."""
 
 from __future__ import annotations
 
 import torch
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.utils.math import quat_apply
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.utils.math import quat_apply, subtract_frame_transforms
 
 from understudy import pickup
 
@@ -52,3 +52,71 @@ def ball_height(env, object_cfg: SceneEntityCfg = SceneEntityCfg("object")) -> t
     height = env.scene[object_cfg.name].data.root_pos_w.torch[:, 2] - env.scene.env_origins[:, 2]
     span = pickup.LIFTED_HEIGHT_M - pickup.BALL_RADIUS_M
     return ((height - pickup.BALL_RADIUS_M) / span).clamp(0.0, 1.0)
+
+
+def ball_position_b(env, robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"), object_cfg: SceneEntityCfg = SceneEntityCfg("object")):
+    """True ball position in the arm base frame."""
+    robot = env.scene[robot_cfg.name]
+    ball = env.scene[object_cfg.name].data.root_pos_w.torch[:, :3]
+    position, _ = subtract_frame_transforms(robot.data.root_pos_w.torch, robot.data.root_quat_w.torch, ball)
+    return position
+
+
+class seen_ball_position(ManagerTermBase):
+    """Ball position in the arm base frame as a camera would report it.
+
+    The report is late by a few control steps, carries a fixed error for the
+    whole attempt (calibration) and a fresh error every frame, and sometimes
+    freezes at its last value while the gripper is close enough to hide the ball.
+    """
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        params = cfg.params
+        self._bias_range = float(params["bias"])
+        self._latency_range = tuple(int(v) for v in params["latency_steps"])
+        count, device = env.num_envs, env.device
+        self._bias = torch.zeros(count, 3, device=device)
+        self._latency = torch.zeros(count, dtype=torch.long, device=device)
+        self._history = torch.zeros(count, self._latency_range[1] + 1, 3, device=device)
+        self._last_report = torch.zeros(count, 3, device=device)
+        self._new_attempt = torch.ones(count, dtype=torch.bool, device=device)
+        self._rows = torch.arange(count, device=device)
+        self.reset()
+
+    def reset(self, env_ids=None):
+        ids = slice(None) if env_ids is None else env_ids
+        count = self._bias[ids].shape[0]
+        device = self._bias.device
+        self._bias[ids] = (2.0 * torch.rand(count, 3, device=device) - 1.0) * self._bias_range
+        low, high = self._latency_range
+        self._latency[ids] = torch.randint(low, high + 1, (count,), device=device)
+        self._new_attempt[ids] = True
+
+    def __call__(
+        self,
+        env,
+        bias: float,
+        noise: float,
+        latency_steps: tuple[int, int],
+        occlusion_distance: float,
+        occlusion_probability: float,
+        tip_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        true_position = ball_position_b(env)
+        new = self._new_attempt
+        self._history[new] = true_position[new].unsqueeze(1)
+        self._history = torch.roll(self._history, shifts=1, dims=1)
+        self._history[:, 0] = true_position
+        report = self._history[self._rows, self._latency] + self._bias
+        report = report + (2.0 * torch.rand_like(report) - 1.0) * noise
+
+        ball_w = env.scene["object"].data.root_pos_w.torch[:, :3]
+        hidden = torch.linalg.norm(ball_w - grasp_point_w(env, tip_cfg), dim=1) < occlusion_distance
+        hidden &= torch.rand(report.shape[0], device=report.device) < occlusion_probability
+        hidden &= ~new
+        report = torch.where(hidden.unsqueeze(1), self._last_report, report)
+
+        self._last_report = report.clone()
+        self._new_attempt[:] = False
+        return report
