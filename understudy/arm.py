@@ -68,6 +68,8 @@ ARM_JOINTS: tuple[Joint, ...] = (
     Joint("joint5", 15, XL330, -1.57, 1.57, 0.0),
 )
 GRIPPER_JOINT_NAMES = ("gripper_joint_1", "gripper_joint_2")
+# Gripper travel from the vendor MuJoCo model. The second finger mirrors the first.
+GRIPPER_LIMITS = {"gripper_joint_1": (0.0, 1.745329), "gripper_joint_2": (-1.745329, 0.0)}
 GRIPPER_DXL_ID = 16
 
 ARM_JOINT_NAMES = tuple(j.name for j in ARM_JOINTS)

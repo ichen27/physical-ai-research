@@ -1,6 +1,7 @@
 """The OMX follower arm as an Isaac Lab articulation.
 
-Geometry and inertia come from the vendor URDF. Actuator values come from
+Geometry and inertia come from the vendor URDF, through the corrected copy
+that ``understudy.sim_urdf`` generates. Actuator values come from
 ``understudy.arm`` so the simulated servos and the real-arm runner share one
 set of assumptions.
 """
@@ -12,6 +13,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 from understudy import arm
+from understudy.sim_urdf import SIM_URDF
 
 _DESCRIPTION = Path(__file__).resolve().parent.parent / "assets" / "open_manipulator_description"
 
@@ -29,7 +31,7 @@ def _actuator(joints: list[str], servo: arm.Servo) -> ImplicitActuatorCfg:
 
 OMX_F_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=str(_DESCRIPTION / "urdf" / "omx_f" / "omx_f.urdf"),
+        asset_path=str(SIM_URDF),
         ros_package_paths=[{"name": "open_manipulator_description", "path": str(_DESCRIPTION)}],
         fix_base=True,
         # Keep end_effector_link as its own body; the reach target is measured there.
