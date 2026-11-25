@@ -33,10 +33,27 @@ BASE_NOTE = (
 )
 
 
+def usb_serial_ports() -> list[str]:
+    patterns = ("cu.usb*", "ttyUSB*", "ttyACM*")
+    return sorted(str(path) for pattern in patterns for path in Path("/dev").glob(pattern))
+
+
 def open_arm(args):
     from understudy.dynamixel import DynamixelArm
 
-    return DynamixelArm(args.port)
+    try:
+        return DynamixelArm(args.port)
+    except ImportError:
+        raise SystemExit("the dynamixel_sdk package is missing. Install it with: pip install dynamixel_sdk") from None
+    except (OSError, RuntimeError) as error:
+        found = ", ".join(usb_serial_ports()) or "none"
+        raise SystemExit(
+            f"cannot open the arm on {args.port}: {error}\n"
+            f"USB serial ports on this computer: {found}\n"
+            "Check the arm's USB cable and power, close any other program using the port, "
+            "and give the port with --port before the command, for example:\n"
+            "  python scripts/real_arm.py --port /dev/cu.usbmodemXXXX status"
+        ) from None
 
 
 def require_torque_off(robot) -> None:
