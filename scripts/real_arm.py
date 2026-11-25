@@ -249,11 +249,23 @@ def cmd_start_pose(args) -> None:
             raise SystemExit("stopped; nothing was changed.")
         rest = robot.read().positions
         robot.configure()
-        start = goals_from_command(runtime.start_command(), calibration)
-        robot.move_slowly(start, args.move_seconds)
-        angles, _ = sensed_from_reading(robot.read(), calibration)
-        print("reached (rad):", [round(a, 3) for a in angles], "wanted:", [round(a, 3) for a in runtime.SENSED_START])
-        robot.move_slowly(rest, args.move_seconds)
+        try:
+            start = goals_from_command(runtime.start_command(), calibration)
+            robot.move_slowly(start, args.move_seconds)
+            angles, _ = sensed_from_reading(robot.read(), calibration)
+            print("reached (rad):", [round(a, 3) for a in angles], "wanted:", [round(a, 3) for a in runtime.SENSED_START])
+            if args.hold_seconds > 0:
+                print(f"holding the start pose for {args.hold_seconds:g} s", flush=True)
+            deadline = time.monotonic() + args.hold_seconds
+            while time.monotonic() < deadline:  # reading keeps the servos' watchdog fed
+                robot.read()
+                time.sleep(0.05)
+        finally:
+            # Whatever happened, lower the arm to where it started instead of letting it drop.
+            try:
+                robot.move_slowly(rest, args.move_seconds)
+            except Exception as error:
+                print(f"could not lower the arm to rest: {error}")
     finally:
         problems = robot.shutdown()
     print("torque off, settings restored" if not problems else "PROBLEMS:\n  " + "\n  ".join(problems))
@@ -365,6 +377,7 @@ def main() -> None:
     commands.add_parser("check", help="Test the calibration against marks on the desk. Reads only.").set_defaults(run=cmd_check)
     start = commands.add_parser("start-pose", help="Slow powered move to the start pose and back.")
     start.add_argument("--move_seconds", type=float, default=4.0)
+    start.add_argument("--hold_seconds", type=float, default=0.0, help="Stay in the start pose this long before returning.")
     start.set_defaults(run=cmd_start_pose)
     run = commands.add_parser("run", help="Run the pickup policy.")
     run.add_argument("--policy", required=True)
