@@ -175,7 +175,8 @@ class ToolWithCameraTests(unittest.TestCase):
         out = self.bench.run(
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
-            dry_run=False, any_distance=False, camera_latency_steps=3, ffmpeg="ffmpeg", **extra,
+            dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
+            **{"any_distance": False, "find_only": False, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -192,6 +193,19 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertLess(log["turn_rad"], -0.5)
         self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)  # in the turned frame the ball is 3 cm to the left
         self.assertFalse(self.bench.robot.torque_on)
+
+    def test_find_only_says_where_the_ball_is_and_leaves_it_on_the_desk(self):
+        distance, bearing = 0.2, math.radians(25)
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        out, log = self.run_pickup(ball, find_only=True)
+        self.assertRegex(out, r"ball seen (19\.\d|20\.\d) cm from the swivel axis, \+1\d degrees round")
+        self.assertIn("no pickup was attempted", out)
+        self.assertIn("torque off, settings restored", out)
+        self.assertEqual(log["steps"], [])
+        self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)
+        self.assertLess(self.bench.highest, pickup.BALL_RADIUS_M + 0.002)  # the ball never left the desk
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
 
     def test_stops_without_a_pickup_when_there_is_no_ball(self):
         out, log = self.run_pickup((0.6, 0.5))

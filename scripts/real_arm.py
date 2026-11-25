@@ -20,6 +20,7 @@ With the camera on the wrist, the ball's position need not be typed in. Once, to
 
 and then:
 
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look --find_only   # find it and say where; no pickup
     python scripts/real_arm.py run --policy <policy.onnx> --camera look   # one look, then pick it up
     python scripts/real_arm.py run --policy <policy.onnx> --camera live   # follow the ball; start from Terminal
 
@@ -567,6 +568,8 @@ def cmd_run(args) -> None:
                     )
                 frame, io = facing.calibration, SwivelLimit(robot, calibration)
                 record_of_run.update(ball=list(facing.ball), turn_rad=facing.turn_rad)
+                if args.find_only:
+                    raise SystemExit("found the ball; no pickup was attempted because --find_only was given.")
                 if live:
                     ball = CameraBall(wrist, lambda: live.look(colour), facing.ball, latency_steps=args.camera_latency_steps)
                 else:
@@ -667,6 +670,8 @@ def main() -> None:
                      help="For --camera live: how many control steps old a picture is taken to be.")
     run.add_argument("--ffmpeg", default=str(Path.home() / "understudy-camera" / "ffmpeg"), help="For --camera live.")
     run.add_argument("--any_distance", action="store_true", help="Try the pickup even if the ball is outside the distances the policy handles.")
+    run.add_argument("--find_only", action="store_true",
+                     help="With --camera: find the ball, turn to face it, say where it is, and lower the arm without a pickup.")
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))
     run.add_argument("--seconds", type=float, default=10.0, help="How long the policy runs.")
     run.add_argument("--max_speed", type=float, default=0.6, help="Cap on how fast each joint's target moves, rad/s.")

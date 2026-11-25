@@ -20,7 +20,7 @@ This is an early project. Read this section before relying on anything.
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
 | Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm it has picked the ball up once, with speed limits, after a failed first attempt (see [Real arm](#real-arm)) |
-| Locating the ball with a camera | Not started |
+| Locating the ball with the camera on the wrist | Detector, calibration and pickup written and tested on saved pictures and in MuJoCo. **On the real arm only the read-only `look` step has run**: the camera is not yet calibrated there and no real pickup has used it (see [Wrist camera](#wrist-camera)) |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
 
@@ -46,7 +46,13 @@ Known limitations:
 | `understudy/runtime.py` | The policy's inputs and outputs outside the training simulator |
 | `understudy/runner.py` | Runs a policy on an arm through servo units; used for the real arm and for the MuJoCo cross-check |
 | `understudy/dynamixel.py` | The real arm's servos. Reads have run on the real arm; **no motor has been driven** |
-| `understudy/mujoco_arm.py` | The vendor's MuJoCo model of the arm behind the same servo interface |
+| `understudy/mujoco_arm.py` | The vendor's MuJoCo model of the arm behind the same servo interface, with an optional rendered wrist camera |
+| `understudy/vision.py` | Finds the orange ball in a picture from the wrist camera |
+| `understudy/camera_model.py` | Where a ball on the desk appears in the wrist camera's picture, and back |
+| `understudy/camera_calibration.py` | Fits the camera's lens and its pose on the wrist from pictures of a ball left in one place |
+| `understudy/camera_collect.py` | Has the arm take those pictures itself: notices the ball, learns its colour, chooses the poses |
+| `understudy/camera_feed.py` | Pictures from the real camera, by name, and from no other camera |
+| `understudy/seek.py` | Looks for the ball and turns the arm to face it |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/build_finger_collision.py` | Builds the fingers' collision shapes as convex pieces that keep their claw shape |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
@@ -55,8 +61,10 @@ Known limitations:
 | `scripts/evaluate.py` | Scores a trained reach policy on thousands of reaches and exports it |
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
+| `scripts/mujoco_camera_calibration.py` | Runs the wrist camera's calibration procedure in MuJoCo and checks the result |
+| `scripts/camera_watch.sh` | Left running in Terminal on the Mac the camera is plugged into; takes a picture when asked |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
-| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. One real pickup so far, with speed limits |
+| `scripts/real_arm.py` | Calibrates the real arm and its camera and runs a policy on it. One real pickup so far, with speed limits and without the camera |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -65,9 +73,9 @@ Known limitations:
 
 ## Prerequisites
 
-- Python 3.11 or newer for the library and tests. No third-party packages are needed.
+- Python 3.11 or newer. The core library needs no third-party packages; the tests, the MuJoCo check and the camera code need the ones in `requirements-dev.txt`, which `ci/run.sh` installs.
 - For training: a Linux machine with an NVIDIA RTX GPU and [Isaac Lab](https://isaac-sim.github.io/IsaacLab/) 3.0 installed. Isaac Sim does not run on macOS.
-- For the real arm (not implemented yet): a ROBOTIS OMX follower arm and its USB controller.
+- For the real arm: a ROBOTIS OMX follower arm and its USB controller. For the wrist camera: a USB camera fixed to the gripper looking along it, and `ffmpeg`. The camera steps are written for macOS.
 
 ## Quickstart
 
@@ -133,6 +141,12 @@ In the pickup task the ball's position is read from the simulator and then delay
 pip install -r requirements-dev.txt
 python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-claw/policy.onnx --attempts 200
 python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-claw/policy.onnx --attempts 3 --video pickup.mp4
+
+# The ball's position from a rendered wrist camera and the real detector, balls anywhere around the arm,
+# the arm turning to face each one, with the real arm's speed limits. Needs OpenGL.
+python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-claw/policy.onnx --attempts 200 \
+    --ball_source wrist-camera --face --area around --max_speed 0.3 --max_lead 0.05 --seconds 15
+python scripts/mujoco_camera_calibration.py     # the camera's calibration procedure, start to finish
 ```
 
 This check has paid for itself three times: it showed that an early policy depended on one servo stiffness, that the training scene's ball was too reluctant to roll, and that the simulated fingers could not hold a ball the way the real ones would.
@@ -181,10 +195,40 @@ The author's arm, from four touches: typical error 3.6 mm, worst 5.3 mm (in heig
 
 `calibrate` (hold the arm in the zero pose by eye) and `check` (compare the tip against typed-in marks) are the older, rougher route and are still there.
 
-Two things are missing for a proper run:
+One thing is still missing for a proper run: **knowledge of the real servos.** Training covers a wide range of servo stiffness because the real value is unknown. Measuring it would allow a narrower, more reliable policy.
 
-- **A camera.** The policy is trained to be given the ball's position continuously. There is no camera pipeline yet. `--ball X Y` is a stand-in: the ball is assumed to stay where you put it until the gripper closes on something, and then to be at the gripper. It cannot see the ball roll away. In the MuJoCo cross-check the stand-in does as well as an exact camera (99.5% held), so a first attempt does not have to wait for a camera.
-- **Knowledge of the real servos.** Training covers a wide range of servo stiffness because the real value is unknown. Measuring it would allow a narrower, more reliable policy.
+### Wrist camera
+
+**Status: built, and tested on saved pictures and in MuJoCo. On the real arm only `look` has run (one picture, no motor power). The camera has not been calibrated on the real arm, the detector has not been tried on a real picture of the ball in front of the gripper, and no real pickup has used the camera.** [results/camera/2026-11-25-wrist-camera](results/camera/2026-11-25-wrist-camera/README.md) has the measurements and the steps that remain.
+
+The camera rides on the gripper and looks along it, so from the start pose it sees the desk ahead. It replaces `--ball X Y`: the arm finds the ball itself.
+
+- **Finding the ball in a picture** (`understudy/vision.py`). By hue, after taking off the grey veil this camera lays over everything; a veil weakens a colour's saturation but not its hue. Colour alone cannot tell the ball from another orange thing, so a patch counts as the ball only if it is round, not cut off by the picture's edge, on the desk within the arm's reach, and the size a ball there must appear.
+- **Where the ball is** (`understudy/camera_model.py`). One camera cannot measure distance, but the ball rests on the desk, so its centre is one radius (21.35 mm) above it; its place is where the line of sight through its picture crosses that height.
+- **Calibration** (`camera-collect`, `camera-fit`). Nothing is measured by hand. You put the ball on the desk in front of the raised gripper. The arm sees it arrive (a picture before against pictures after), learns its colour from that, looks at it from about twenty poses it chooses itself, and the focal length, lens distortion and the camera's pose on the wrist are fitted together with the ball's position, on the one assumption that the ball did not move. It then asks for the ball to be moved once and repeats. A ball that never appears, a pose where it is not seen and a ball nudged part way through are all detected and reported. Because the arm's own joint readings carry the camera about, the answer is in the arm's own frame: a swivel zero that is a few degrees out turns the camera's answers and the gripper's position together.
+- **During a pickup** (`understudy.runner.CameraBall`). While the gripper is open, each picture in which the ball is seen whole moves its reported position. When it is out of the picture or partly hidden by the fingers, the last position seen is kept. Once the gripper is commanded closed the camera is ignored, since a lifted ball is no longer on the desk, and the fingers say whether it is held, exactly as without a camera.
+- **Turning to face the ball** (`understudy/seek.py`). The policy was trained on balls within 6 cm either side of straight ahead, and with the speed limits it lifts reliably only from the middle of that patch to its left. The arm is the same whichever way its swivel points, so before the pickup "straight ahead" is turned to put the ball 3 cm left of it, and the arm swivels there. A ball further round than the camera sees from the start pose is found by swivelling to look. In MuJoCo with the speed limits this takes the lift rate from 61.5% to 91.5% for balls in the trained patch, and gives 99.0% for balls anywhere within 57 degrees either side of straight ahead and 15 to 24 cm from the swivel axis (95.5% with the camera's mount taken to be 3 mm and 1 degree out). Outside 15 to 24 cm it falls away quickly, so `run --camera` does not attempt it.
+
+macOS lets a program use a camera only if the person at the computer started it, so there are two ways to get pictures, and both open the arm's camera by name and never another one (a laptop's own camera, a phone's):
+
+- `scripts/camera_watch.sh`, left running in Terminal on the Mac the camera is plugged into, takes one picture whenever asked. Everything except `run --camera live` goes through it, including over a remote login. A picture takes a second or two.
+- `run --camera live` reads the camera itself, about thirty pictures a second, to follow the ball during the pickup. That command must be started from Terminal on that Mac.
+
+```sh
+pip install opencv-python-headless
+mkdir -p ~/understudy-camera && cp scripts/camera_watch.sh ~/understudy-camera/camera-watch.sh   # once; put an ffmpeg binary there too
+~/understudy-camera/camera-watch.sh             # in Terminal on the Mac with the camera; leave it running
+
+python scripts/real_arm.py look --save look.jpg # reads only: one picture, and where the ball is once calibrated
+python scripts/real_arm.py camera-collect       # POWERED, slow: raises the arm, waits for the ball, looks at it from ~20 poses, twice
+python scripts/real_arm.py camera-fit           # works out the camera, reports its error, saves camera.local.json
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look --find_only \
+    --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: finds the ball, turns to face it, says where it is; no pickup
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look \
+    --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: the same, then picks it up
+```
+
+`camera-collect` moves the arm with the gripper raised: by the arm's model the tip never comes within 7 cm of the desk, and no joint is asked to turn faster than 0.25 rad/s (14 degrees a second). While it works out a camera between poses it keeps reading the servos, whose watchdog would otherwise cut power and drop the arm. `camera-fit` refuses to save a camera whose answers for a ball that did not move are spread wider than 8 mm, or when a clearly different camera explains the pictures nearly as well. `run --camera` stops before the pickup, and lowers the arm, if it does not see the ball or the ball is outside the distances the policy lifts from.
 
 ### Calibration file
 
@@ -202,7 +246,7 @@ Two things are missing for a proper run:
 bash ci/run.sh
 ```
 
-This runs the unit tests and compiles every Python file. The tests include a replay of an attempt recorded in Isaac Lab, which checks that the code used outside the simulator builds the policy's input and reads its output exactly as Isaac Lab did, and an end-to-end pickup in MuJoCo through the servo interface, once on an arm with offset and reversed servos. It does not start Isaac Lab or touch hardware. The Isaac Lab tasks are checked by hand with the `scripts/check_*.py` and `scripts/evaluate*.py` scripts on a GPU machine; CI does not run them.
+This runs the unit tests and compiles every Python file. The tests include the ball detector on pictures from the real camera, the camera's calibration from simulated sightings, the real-arm tool's camera commands run against the simulated arm with rendered pictures (skipped on machines without OpenGL), a replay of an attempt recorded in Isaac Lab, which checks that the code used outside the simulator builds the policy's input and reads its output exactly as Isaac Lab did, and an end-to-end pickup in MuJoCo through the servo interface, once on an arm with offset and reversed servos. It does not start Isaac Lab or touch hardware. The Isaac Lab tasks are checked by hand with the `scripts/check_*.py` and `scripts/evaluate*.py` scripts on a GPU machine; CI does not run them.
 
 ## Results and artifacts
 
@@ -211,6 +255,7 @@ This runs the unit tests and compiles every Python file. The tests include a rep
 | [Reach baseline, 2026-11-24](results/reach/2026-11-24-baseline/README.md) | First reach policy, simulation only | Exported policy (ONNX and TorchScript), training checkpoint, run settings, training curves, five evaluation files |
 | [Ball pickup, first policy, 2026-11-24](results/pickup/2026-11-24-first/README.md) | First pickup policy, identical simulated arms | Video and still frames, exported policy, training checkpoint, run settings, training curves, seven evaluation files |
 | [Ball pickup with claw-shaped fingers, 2026-11-24](results/pickup/2026-11-24-claw/README.md) | Current pickup policy, holds the ball in two simulators | MuJoCo video and still frames, exported policy and its interface file, eleven MuJoCo evaluation files. The training checkpoint is on a stopped rented machine |
+| [Wrist camera, 2026-11-25](results/camera/2026-11-25-wrist-camera/README.md) | Picking the ball up from where the wrist camera sees it, in MuJoCo. Not yet on the real arm | Twenty-nine MuJoCo measurement files for the pickup (fourteen conditions and fifteen distances), four for the calibration procedure, one rendered wrist picture |
 | [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Earlier pickup policy, which dropped the ball in the second simulator | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
 
 ## Contributing

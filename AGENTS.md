@@ -25,10 +25,14 @@ Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is 
 - `understudy/runtime.py` and `understudy/runner.py` are the single path from sensor readings to servo commands, used by the MuJoCo cross-check and the real arm alike. Change the policy's inputs or outputs there and in the Isaac Lab task together, re-record `tests/fixtures/pickup_rollout.json` with `scripts/record_rollout.py`, and keep `interface.json` beside every exported policy.
 - Measure every trained policy with the `scripts/evaluate*.py` scripts, including the servo-stiffness stress tests, and record the numbers under `results/`. The training log's own success rate is more lenient and is not the reported figure.
 - Real arm: the arm's USB controller is attached to the author's laptop, not the development machine.
+- Wrist camera: pictures come only through `understudy/camera_feed.py`, which opens the arm's camera by name. Never add a fallback to another camera; a laptop has its own and may see a phone's. macOS refuses the camera to programs started over a remote login, so one-at-a-time pictures go through `scripts/camera_watch.sh`, which the author starts in Terminal.
+- A camera run turns "straight ahead" to face the ball by shifting the swivel's zero in the calibration (`understudy.runner.turned`). Everything computed from that calibration is then in the turned frame; do not mix it with positions from the unturned one.
 
 ## Hardware safety
 
 Moving the arm is a physical action. Read servo state before commanding motion, keep moves slow and bounded, never send policy output without a calibration file and limit clamping, and end every session with torque off and verified.
+
+While torque is on, the computer must speak to the servos at least every 500 ms, or their watchdog cuts power and a raised arm drops. This has happened once on the real arm and was caught once more before a run. Anything that takes longer than a few tens of milliseconds between reads (fitting, planning, waiting for a picture) must read the arm as it goes: see `understudy.camera_collect.Pulse`. A second thread does not do it; that was measured. `tests/sim_rig.py`'s `SimRobot` records the longest silence while powered, and tests of any powered command should assert on it.
 
 ## Validation
 
