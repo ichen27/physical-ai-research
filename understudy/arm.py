@@ -22,51 +22,60 @@ STOCK_ZERO_TICK = 2048
 CONTROL_HZ = 30.0
 
 
-@dataclass(frozen=True)
-class Servo:
-    """Simulation assumptions for one DYNAMIXEL model.
-
-    ``stiffness`` is a first-principles estimate, not a measurement. With the
-    vendor Position P Gain of 1000 the controller output is ``1000 / 128`` PWM
-    units per tick of error and saturates at 885 units, which is about 0.174 rad
-    of error. Dividing stall torque by that error gives the value below. It must
-    be replaced by a step-response measurement on the real arm.
-    """
-
-    model: str
-    stall_torque: float  # N*m, vendor MuJoCo force range
-    stiffness: float  # N*m/rad at Position P Gain 1000
-    damping: float  # N*m*s/rad, near critical for the armature below
-    armature: float  # kg*m^2, vendor MuJoCo model
-    max_velocity: float  # rad/s, vendor URDF limit
-
-
-XL430 = Servo("XL430-W250", stall_torque=1.5, stiffness=8.0, damping=0.7, armature=0.005, max_velocity=4.8)
-XL330 = Servo("XL330-M288", stall_torque=0.52, stiffness=3.0, damping=0.15, armature=0.001, max_velocity=4.8)
-
+# Servo and joint values below are taken from the vendor's MuJoCo model
+# (assets/open_manipulator_description/mujoco/omx/omx.xml). That file describes its own
+# gains and joint dynamics as approximate and does not model the servos' motion
+# profiles, so training varies these values instead of trusting them exactly
+# (see understudy/variation.py). tests/test_vendor_spec.py checks them against the file.
 VENDOR_POSITION_P_GAIN = 1000
+VENDOR_POSITION_D_GAIN = 1000
+# With Drive Mode 4 the vendor follower configuration uses a time-based profile:
+# every new goal position is reached over this time.
+VENDOR_PROFILE_TIME_S = 0.050
 
 
 @dataclass(frozen=True)
 class Joint:
     name: str  # URDF joint name
     dxl_id: int
-    servo: Servo
+    servo: str  # DYNAMIXEL model
     lower: float  # rad, limit used in simulation and enforced by the runner
     upper: float
-    default: float  # rad, pose the episode resets around
+    default: float  # rad, pose the reach task resets around
+    stiffness: float  # N*m/rad, position gain of the vendor model
+    drive_damping: float  # N*m*s/rad, velocity gain the vendor model compiles to in MuJoCo 3.3.7
+    passive_damping: float  # N*m*s/rad, joint damping of the vendor model
+    armature: float  # kg*m^2, reflected rotor inertia
+    effort_limit: float  # N*m
+    max_velocity: float = 4.8  # rad/s, vendor URDF limit
+
+    @property
+    def damping(self) -> float:
+        """Total damping for a simulator that has one damping term per joint drive."""
+        return self.drive_damping + self.passive_damping
 
 
 # Limits are deliberately narrower than the vendor servo limits
 # (ID 12: 830-3129 ticks, ID 13: 1024-3140 ticks, others unlimited) so a policy
 # cannot command the arm into its own base or the table edge of travel.
 ARM_JOINTS: tuple[Joint, ...] = (
-    Joint("joint1", 11, XL430, -1.57, 1.57, 0.0),
-    Joint("joint2", 12, XL430, -1.50, 1.50, -0.35),
-    Joint("joint3", 13, XL430, -1.50, 1.50, 0.60),
-    Joint("joint4", 14, XL330, -1.70, 1.70, 0.90),
-    Joint("joint5", 15, XL330, -1.57, 1.57, 0.0),
+    Joint("joint1", 11, "XL430-W250", -1.57, 1.57, 0.0, 50.0, 2.1047, 0.20, 0.005, 1.5),
+    Joint("joint2", 12, "XL430-W250", -1.50, 1.50, -0.35, 50.0, 2.3606, 0.20, 0.005, 1.5),
+    Joint("joint3", 13, "XL430-W250", -1.50, 1.50, 0.60, 50.0, 1.8746, 0.20, 0.005, 1.5),
+    Joint("joint4", 14, "XL330-M288", -1.70, 1.70, 0.90, 50.0, 0.5185, 0.05, 0.001, 0.52),
+    Joint("joint5", 15, "XL330-M288", -1.57, 1.57, 0.0, 50.0, 0.4559, 0.05, 0.001, 0.52),
 )
+# The vendor model applies 0.1 N*m of dry friction at each arm joint. PhysX has no
+# equivalent torque-valued setting, so the Isaac Lab arm does not model it; the
+# MuJoCo cross-check does.
+VENDOR_JOINT_FRICTION_LOSS = 0.1
+
+# One servo drives both fingers through gears.
+GRIPPER_STIFFNESS = 50.0
+GRIPPER_DRIVE_DAMPING = 0.4963
+GRIPPER_PASSIVE_DAMPING = 0.01
+GRIPPER_ARMATURE = 0.0003
+GRIPPER_EFFORT_LIMIT = 0.2  # N*m at the configured current limit, shared by the two fingers
 GRIPPER_JOINT_NAMES = ("gripper_joint_1", "gripper_joint_2")
 # Gripper travel from the vendor MuJoCo model. The second finger mirrors the first.
 GRIPPER_LIMITS = {"gripper_joint_1": (0.0, 1.745329), "gripper_joint_2": (-1.745329, 0.0)}
@@ -109,30 +118,51 @@ class Calibration:
     is not guaranteed to be the URDF zero pose. ``zero_ticks`` is the reading
     of each arm servo with the arm held in the URDF zero pose, and ``signs``
     records whether increasing ticks increase the URDF angle.
+
+    ``gripper_closed_tick`` is the gripper servo's reading with the fingers
+    closed on nothing, and ``gripper_sign`` is 1 if opening increases its ticks.
+    They are needed only for tasks that use the gripper.
     """
 
     zero_ticks: tuple[float, ...]
     signs: tuple[int, ...]
+    gripper_closed_tick: float | None = None
+    gripper_sign: int = 1
 
     def __post_init__(self) -> None:
         n = len(ARM_JOINTS)
         if len(self.zero_ticks) != n or len(self.signs) != n:
             raise ValueError(f"calibration needs {n} zero ticks and {n} signs")
-        if any(s not in (1, -1) for s in self.signs):
+        if any(s not in (1, -1) for s in self.signs) or self.gripper_sign not in (1, -1):
             raise ValueError("every sign must be 1 or -1")
 
     @classmethod
     def stock(cls) -> "Calibration":
         n = len(ARM_JOINTS)
-        return cls((float(STOCK_ZERO_TICK),) * n, (1,) * n)
+        return cls((float(STOCK_ZERO_TICK),) * n, (1,) * n, float(STOCK_ZERO_TICK), 1)
 
     @classmethod
     def load(cls, path: str | Path) -> "Calibration":
         data = json.loads(Path(path).read_text())
         try:
-            return cls(tuple(float(t) for t in data["zero_ticks"]), tuple(int(s) for s in data["signs"]))
-        except (KeyError, TypeError) as exc:
+            closed = data.get("gripper_closed_tick")
+            return cls(
+                tuple(float(t) for t in data["zero_ticks"]),
+                tuple(int(s) for s in data["signs"]),
+                float(closed) if closed is not None else None,
+                int(data.get("gripper_sign", 1)),
+            )
+        except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError(f"{path}: expected keys 'zero_ticks' and 'signs'") from exc
+
+    def save(self, path: str | Path) -> None:
+        data = {
+            "zero_ticks": list(self.zero_ticks),
+            "signs": list(self.signs),
+            "gripper_closed_tick": self.gripper_closed_tick,
+            "gripper_sign": self.gripper_sign,
+        }
+        Path(path).write_text(json.dumps(data, indent=2) + "\n")
 
     def to_rad(self, ticks: list[float] | tuple[float, ...]) -> list[float]:
         if len(ticks) != len(ARM_JOINTS):
@@ -141,3 +171,16 @@ class Calibration:
 
     def to_ticks(self, angles: list[float] | tuple[float, ...]) -> list[int]:
         return [rad_to_ticks(a, z, s) for a, z, s in zip(clamp_to_limits(angles), self.zero_ticks, self.signs)]
+
+    def _gripper_zero(self) -> float:
+        if self.gripper_closed_tick is None:
+            raise ValueError("this calibration has no gripper reading; capture it before using the gripper")
+        return self.gripper_closed_tick
+
+    def finger_to_rad(self, ticks: float) -> float:
+        """Finger angle: 0 closed, positive open."""
+        return ticks_to_rad(ticks, self._gripper_zero(), self.gripper_sign)
+
+    def finger_to_ticks(self, angle: float) -> int:
+        low, high = GRIPPER_LIMITS[GRIPPER_JOINT_NAMES[0]]
+        return rad_to_ticks(min(max(angle, low), high), self._gripper_zero(), self.gripper_sign)

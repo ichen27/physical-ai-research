@@ -35,23 +35,19 @@ parser.add_argument(
     "--stiffness_scale",
     type=float,
     default=1.0,
-    help="Multiply the simulated arm servo stiffness, keeping the damping ratio, to test sensitivity.",
+    help="Multiply the vendor-model arm servo stiffness, keeping the damping ratio, to test sensitivity.",
 )
 parser.add_argument("--result_name", default="evaluation", help="File name (without .json) for the results.")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 app = AppLauncher(args).app
 
-import importlib.metadata as metadata  # noqa: E402
-
-import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
-from isaaclab_tasks.utils import load_cfg_from_registry, parse_env_cfg  # noqa: E402
-from rsl_rl.runners import OnPolicyRunner  # noqa: E402
+from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 
 import understudy_isaac  # noqa: E402
 from understudy import arm  # noqa: E402
+from understudy_isaac.policy_io import load_policy  # noqa: E402
 
 FINAL_WINDOW_STEPS = int(0.5 * arm.CONTROL_HZ)
 
@@ -63,22 +59,12 @@ def main() -> None:
     env_cfg.observations.policy.enable_corruption = args.noise
     if args.stiffness_scale <= 0:
         raise SystemExit("--stiffness_scale must be positive")
-    for name in ("xl430", "xl330"):
-        actuator = env_cfg.scene.robot.actuators[name]
-        actuator.stiffness = actuator.stiffness * args.stiffness_scale
-        actuator.damping = actuator.damping * args.stiffness_scale**0.5
-    agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, metadata.version("rsl-rl-lib"))
-
-    env = RslRlVecEnvWrapper(gym.make(task, cfg=env_cfg), clip_actions=agent_cfg.clip_actions)
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    runner.load(args.checkpoint)
-    policy = runner.get_inference_policy(device=env.unwrapped.device)
+    servos = env_cfg.scene.robot.actuators["arm"]
+    servos.stiffness = {name: value * args.stiffness_scale for name, value in servos.stiffness.items()}
+    servos.damping = {name: value * args.stiffness_scale**0.5 for name, value in servos.damping.items()}
 
     output = Path(args.output)
-    output.mkdir(parents=True, exist_ok=True)
-    runner.export_policy_to_jit(path=str(output), filename="policy.pt")
-    runner.export_policy_to_onnx(path=str(output), filename="policy.onnx")
+    env, policy = load_policy(task, env_cfg, args.checkpoint, output)
 
     command = env.unwrapped.command_manager.get_term("ee_pose")
     hold_steps = int(round(env_cfg.commands.ee_pose.resampling_time_range[0] * arm.CONTROL_HZ))

@@ -1,0 +1,5 @@
+{
+  "arm_action": "incremental",
+  "arm_action_scale": 0.1,
+  "max_lead": 0.35
+}

@@ -14,6 +14,10 @@ commit `0f18f88238adceae951493750d2295d3b02a471b`, directory `open_manipulator_d
 `understudy/sim_urdf.py`. The changes are narrower joint limits and a negligible
 mass on links that had none; the file's header states this.
 
+`assets/generated/collision/finger_*.stl` are derived from the two gripper finger meshes by
+`scripts/build_finger_collision.py`: each finger is cut into slabs along its length and the
+convex hull of each slab is saved, in metres.
+
 All of these are licensed under the Apache License 2.0. A copy of that license is at
 `assets/open_manipulator_description/LICENSE`.
 

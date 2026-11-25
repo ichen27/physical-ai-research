@@ -1,0 +1,26 @@
+{
+  "simulator": "MuJoCo 3.3.7, vendor model",
+  "policy": "results/pickup/2026-11-24-varied/policy.onnx",
+  "attempts_scored": 200,
+  "servo_stiffness_scale": 1.0,
+  "ball_mass_kg": 0.005,
+  "ball_friction": 1.0,
+  "gripper_force_scale": 1.0,
+  "camera_bias_m": 0.01,
+  "camera_noise_m": 0.004,
+  "camera_latency_steps": [
+    1,
+    3
+  ],
+  "command_delay_s": 0.015,
+  "servo_profile_time_s": 0.05,
+  "extra_delay_steps": 0,
+  "ball_source": "placed",
+  "seed": 7,
+  "success_rate": 0.0,
+  "lifted_rate": 0.01,
+  "lifted_at_some_point_rate": 0.87,
+  "safety_stop_rate": 0.0,
+  "median_final_ball_height_m": 0.020982818157539843,
+  "median_distance_to_target_when_lifted_m": 0.09201385181591946
+}
