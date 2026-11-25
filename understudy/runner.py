@@ -8,7 +8,7 @@ DYNAMIXEL servos and, in tests, a simulated arm standing in for them.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Protocol, Sequence
 
 from . import arm, pickup, runtime
@@ -102,6 +102,9 @@ def run_pickup(
     advance: Callable[[], None],
     send: bool = True,
     interface: runtime.Interface | None = None,
+    max_speed: float | None = None,
+    max_lead: float | None = None,
+    on_step: Callable[[Step], None] | None = None,
 ) -> list[Step]:
     """Run the policy for ``seconds`` at the control rate.
 
@@ -109,9 +112,28 @@ def run_pickup(
     real arm it waits for the next tick of the clock, in a simulation it steps
     the physics. With ``send`` false nothing is written to the arm. ``interface``
     defaults to the one saved with the policy, if the policy carries one.
+
+    Two limits make the arm gentler than the policy was trained to be, for a
+    real arm. They take it outside its training: in MuJoCo the 2026-11-24
+    policy lifts the ball in 99.5% of attempts without them and about 60% with. ``max_speed`` (rad/s) caps how fast each arm joint's target may
+    move, and so how fast the joint is asked to go. ``max_lead`` (rad) caps how
+    far a target may sit from its joint's present angle, and so how hard a
+    servo pushes when something is in the way; it can only tighten the
+    interface's own value. The policy sees the limited targets as its own.
+
+    ``on_step`` is called with each step as it happens, so that a run which is
+    cut short still leaves a record.
     """
     if interface is None:
         interface = getattr(policy, "interface", runtime.Interface())
+    if max_speed is not None and max_speed <= 0:
+        raise ValueError("max_speed must be positive")
+    if max_lead is not None:
+        if interface.arm_action != "incremental":
+            raise ValueError("max_lead applies only to a policy with incremental targets")
+        if not 0 < max_lead <= interface.max_lead:
+            raise ValueError(f"max_lead must be above 0 and at most the policy's own {interface.max_lead}")
+        interface = replace(interface, max_lead=max_lead)
     for axis, value in zip("xyz", hold_target):
         low, high = pickup.HOLD_TARGET[axis]
         if not low <= value <= high:
@@ -131,9 +153,15 @@ def run_pickup(
         observation = runtime.build_observation(angles, velocities, ball_position, hold_target, previous_action, lead)
         action = list(policy(observation))
         command = runtime.decode_action(action, angles[:5], interface, targets)
+        if max_speed is not None:
+            step = max_speed / arm.CONTROL_HZ
+            slowed = tuple(min(max(new, old - step), old + step) for new, old in zip(command.arm_targets, targets))
+            command = replace(command, arm_targets=slowed)
         if send:
             io.write_goals(goals_from_command(command, calibration))
         steps.append(Step(tuple(angles), ball_position, tuple(action), command))
+        if on_step is not None:
+            on_step(steps[-1])
         previous_action, gripper_open, targets = action, command.gripper_open, list(command.arm_targets)
         advance()
     return steps

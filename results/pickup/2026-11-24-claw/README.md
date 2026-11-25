@@ -47,7 +47,9 @@ python scripts/mujoco_pickup.py --policy results/pickup/<name>/policy.onnx --att
 | `mujoco-extra-delay.json` | One more control step (33 ms) of command delay | 79.0% | 53.5% | 8.0% | 36 mm |
 | `mujoco-no-camera.json` | No camera; ball assumed where it was placed | 100% | 99.5% | 8.0% | 36 mm |
 | `mujoco-hull-fingers.json` | Fingers as convex hulls, as before | 65.5% | 0.5% | 0% | 81 mm |
+| `mujoco-gentle-limits.json` | No camera; joint targets limited to 0.6 rad/s and to 0.1 rad from the joint; 10 s attempts | 63.5% | 63.5% | 1.0% | 39 mm |
 
+- The policy is fast. Unlimited, its fastest joint peaks at a median 5.7 rad/s (about 330 degrees a second), the servos' top speed. That is too violent for a first run on a real arm: on 2026-11-25 it hit the desk. The last row limits it from outside, which brings the peak down to a median 0.85 rad/s and the lift rate down to 63.5%, because the policy was not trained to move that slowly. Running it in slow motion instead did worse (13–38% across 2× to 12×). A policy that is gentle and reliable needs the speed limit in its training.
 - The grasp holds. At the vendor's settings the ball is kept to the end in 96% of attempts, and in 73–89% across a 12-fold range of servo stiffness.
 - The last row is the same policy with the old finger shape: it keeps the ball in 1 attempt of 200. The finger geometry is what decides whether the grip holds.
 - The no-camera row matters for a first hardware test. With the ball's position typed in instead of tracked, the result is as good as with an exact camera, so a real attempt does not have to wait for a camera.

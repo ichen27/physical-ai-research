@@ -127,6 +127,39 @@ class LoopTests(unittest.TestCase):
         self.assertAlmostEqual(steps[1].command.arm_targets[0], pickup.START_POSE[0] + 0.2)
         self.assertAlmostEqual(steps[2].command.arm_targets[0], pickup.START_POSE[0] + 0.3)
 
+    def test_a_speed_limit_caps_how_fast_targets_move(self):
+        fake = FakeArm(ODD)
+        incremental = runtime.Interface("incremental", 0.1, 0.35)
+        seen = []
+        steps = run_pickup(
+            fake, lambda obs: [1.0, -1.0, 0.0, 0.0, 0.0, 1.0], ODD, PlacedBall(0.2, 0.0), [0.19, 0.0, 0.13], 0.2,
+            fake.advance, interface=incremental, max_speed=0.6, on_step=seen.append,
+        )
+        per_step = 0.6 / arm.CONTROL_HZ  # far less than the 0.1 rad the policy asked for
+        self.assertAlmostEqual(steps[0].command.arm_targets[0], pickup.START_POSE[0] + per_step)
+        self.assertAlmostEqual(steps[2].command.arm_targets[0], pickup.START_POSE[0] + 3 * per_step)
+        self.assertAlmostEqual(steps[2].command.arm_targets[1], pickup.START_POSE[1] - 3 * per_step)
+        self.assertEqual(seen, steps)  # every step is handed over as it happens
+
+    def test_a_lead_limit_can_only_tighten_the_policys_own(self):
+        fake = FakeArm(ODD)
+        incremental = runtime.Interface("incremental", 0.1, 0.35)
+
+        def run(**limits):
+            return run_pickup(fake, lambda obs: [5.0, 0, 0, 0, 0, 1.0], ODD, PlacedBall(0.2, 0.0), [0.19, 0.0, 0.13],
+                              0.1, fake.advance, interface=incremental, **limits)
+
+        def furthest_lead(steps):
+            return max(step.command.arm_targets[0] - step.joint_angles[0] for step in steps)
+
+        # The policy asks for half a radian a step. Its own limit lets 0.35 through; the tighter one 0.1.
+        self.assertAlmostEqual(furthest_lead(run()), 0.35, delta=0.002)
+        self.assertAlmostEqual(furthest_lead(run(max_lead=0.1)), 0.1, delta=0.002)
+        with self.assertRaises(ValueError):
+            run(max_lead=0.5)
+        with self.assertRaises(ValueError):
+            run(max_speed=0.0)
+
     def test_dry_run_writes_nothing(self):
         fake = FakeArm(ODD)
         run_pickup(fake, lambda obs: [0.5] * 6, ODD, PlacedBall(0.2, 0.0), [0.19, 0.0, 0.13], 0.5, fake.advance, send=False)

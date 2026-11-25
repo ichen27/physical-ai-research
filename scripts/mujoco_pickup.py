@@ -31,7 +31,8 @@ from understudy import arm, pickup, runtime, variation  # noqa: E402
 from understudy.mujoco_arm import MujocoArm, SimulatedCamera, build_model  # noqa: E402
 from understudy.runner import PlacedBall, run_pickup  # noqa: E402
 
-FINAL_WINDOW_STEPS = int(0.5 * arm.CONTROL_HZ)
+FINAL_WINDOW_STEPS = int(0.5 * arm.CONTROL_HZ)  # control ticks, so half a second on the clock
+speeds: list[float] = []  # each finished attempt's fastest arm joint speed, rad/s
 
 
 def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None) -> dict:
@@ -44,8 +45,10 @@ def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None)
         ball = PlacedBall(*ball_xy)
 
     heights, distances = [], []
+    peak_speed = [0.0]
 
     def after_step(arm_sim: MujocoArm) -> None:
+        peak_speed[0] = max(peak_speed[0], float(np.max(np.abs([arm_sim.data.qvel[a] for a in arm_sim._qvel[:5]]))))
         position = arm_sim.ball()
         heights.append(float(position[2]))
         distances.append(float(np.linalg.norm(position - np.array(target))))
@@ -55,7 +58,9 @@ def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None)
     sim.after_step = after_step
     stopped = False
     try:
-        run_pickup(sim, policy, sim.calibration, ball, target, pickup.EPISODE_SECONDS, advance=sim.advance)
+        run_pickup(sim, policy, sim.calibration, ball, target, args.seconds, advance=sim.advance,
+                   max_speed=args.max_speed, max_lead=args.max_lead)
+        speeds.append(peak_speed[0])
     except RuntimeError:
         # The runner's safety check stopped the arm, as it would on hardware. The attempt counts as failed.
         stopped = True
@@ -129,6 +134,9 @@ def main() -> None:
         help="Collide the fingers as convex hulls, as the vendor model does, instead of as curved claws.",
     )
     parser.add_argument("--gripper_force_scale", type=float, default=1.0, help="Multiple of the vendor gripper force.")
+    parser.add_argument("--seconds", type=float, default=pickup.EPISODE_SECONDS, help="Length of each attempt.")
+    parser.add_argument("--max_speed", type=float, help="Cap on how fast each arm joint's target moves, rad/s.")
+    parser.add_argument("--max_lead", type=float, help="Cap on how far a target may sit from its joint, rad.")
     parser.add_argument("--output", help="Write the results to this JSON file.")
     parser.add_argument("--video", help="Record the first attempts to this MP4 file (needs ffmpeg).")
     parser.add_argument("--video_attempts", type=int, default=3)
@@ -170,6 +178,10 @@ def main() -> None:
         "extra_delay_steps": args.extra_delay_steps,
         "ball_source": args.ball_source,
         "seed": args.seed,
+        "seconds": args.seconds,
+        "max_speed_rad_s": args.max_speed,
+        "max_lead_rad": args.max_lead,
+        "peak_joint_speed_rad_s": {"median": float(np.median(speeds)), "highest": float(max(speeds))} if speeds else None,
         "success_rate": sum(o["held"] for o in outcomes) / len(outcomes),
         "lifted_rate": len(lifted) / len(outcomes),
         "lifted_at_some_point_rate": sum(o["ever_lifted"] for o in outcomes) / len(outcomes),

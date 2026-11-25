@@ -1,6 +1,6 @@
 """Use a trained pickup policy on the real OMX follower arm.
 
-ONLY THE STEPS THAT READ HAVE RUN ON A REAL ARM; nothing here has driven its motors yet. Read the "Real arm" section of the README first, keep
+THE FIRST RUN ON A REAL ARM FAILED (it moved at full speed and hit the desk); the speed limits added since are untried on hardware. Read the "Real arm" section of the README first, keep
 a hand on the arm's power switch, and go through the steps in order:
 
     python scripts/real_arm.py status                      # reads only
@@ -18,8 +18,10 @@ Needs: pip install dynamixel_sdk onnxruntime numpy
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -276,21 +278,57 @@ def cmd_run(args) -> None:
                       "gripper", "open" if step.command.gripper_open else "closed")
             robot._port.closePort()
             return
+        print(
+            f"Limits: joint targets move at most {args.max_speed} rad/s and sit at most {args.max_lead} rad from "
+            "the joint. They make the arm gentler than the policy was trained to be, and less likely to succeed."
+        )
         if input("Arm clear of people and objects, hand on the power switch? Type yes: ").strip().lower() != "yes":
             raise SystemExit("stopped; nothing was changed.")
         rest = robot.read().positions
+        log_path = Path(args.log or REPO / time.strftime("run-%Y%m%d-%H%M%S.local.json"))
+        chain, log = Chain(), []
+
+        def record(step) -> None:
+            log.append({
+                "angles": [round(a, 4) for a in step.joint_angles],
+                "targets": [round(t, 4) for t in step.command.arm_targets],
+                "gripper_open": step.command.gripper_open,
+                "tip": [round(v, 4) for v in chain.tip_position(step.joint_angles[:5])],
+                "ball": [round(v, 4) for v in step.ball_position],
+                "action": [round(a, 3) for a in step.action],
+            })
+
         robot.configure()
-        start = goals_from_command(runtime.start_command(), calibration)
-        robot.move_slowly(start, args.move_seconds)
-        steps = run_pickup(robot, policy, calibration, ball, args.target, args.seconds, advance=robot.advance)
-        last = steps[-1]
-        print("finished. gripper", "open" if last.command.gripper_open else "closed",
-              f"finger angle {last.joint_angles[5]:.2f} rad (above {PlacedBall.HELD_FINGER_RAD} with the gripper closed means it is holding something)")
-        input("Press Enter to open the gripper and return to rest. ")
-        release = list(robot.read().positions)
-        release[5] = calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)
-        robot.move_slowly(release, 1.0)
-        robot.move_slowly(rest, args.move_seconds)
+        try:
+            start = goals_from_command(runtime.start_command(), calibration)
+            robot.move_slowly(start, args.move_seconds)
+            steps = run_pickup(
+                robot, policy, calibration, ball, args.target, args.seconds, advance=robot.advance,
+                max_speed=args.max_speed, max_lead=args.max_lead, on_step=record,
+            )
+            last = steps[-1]
+            print("finished. gripper", "open" if last.command.gripper_open else "closed",
+                  f"finger angle {last.joint_angles[5]:.2f} rad (above {PlacedBall.HELD_FINGER_RAD} with the gripper closed means it is holding something)")
+            # Nothing waits on the keyboard while the arm is powered: the servos'
+            # watchdog stops them if the bus goes quiet for half a second.
+            # So the hold keeps reading, and sends no new goal: the gripper keeps squeezing.
+            deadline = time.monotonic() + args.hold_seconds
+            while time.monotonic() < deadline:
+                robot.read()
+                time.sleep(0.05)
+            release = list(robot.read().positions)
+            release[5] = calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)
+            robot.move_slowly(release, 1.0)
+        finally:
+            log_path.write_text(json.dumps({"ball": list(args.ball), "target": list(args.target),
+                                            "max_speed": args.max_speed, "max_lead": args.max_lead,
+                                            "control_hz": arm.CONTROL_HZ, "steps": log}) + "\n")
+            print(f"{len(log)} steps recorded in {log_path}")
+            # Whatever happened, lower the arm to where it started instead of letting it drop.
+            try:
+                robot.move_slowly(rest, args.move_seconds)
+            except Exception as error:  # the servos may not be answering; shutdown below still runs
+                print(f"could not lower the arm to rest: {error}")
     finally:
         if not args.dry_run:
             problems = robot.shutdown()
@@ -332,7 +370,11 @@ def main() -> None:
     run.add_argument("--policy", required=True)
     run.add_argument("--ball", type=float, nargs=2, required=True, metavar=("X", "Y"))
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))
-    run.add_argument("--seconds", type=float, default=pickup.EPISODE_SECONDS)
+    run.add_argument("--seconds", type=float, default=10.0, help="How long the policy runs.")
+    run.add_argument("--max_speed", type=float, default=0.6, help="Cap on how fast each joint's target moves, rad/s.")
+    run.add_argument("--max_lead", type=float, default=0.1, help="Cap on how far a target sits from its joint, rad.")
+    run.add_argument("--hold_seconds", type=float, default=3.0, help="Hold after the policy finishes, before letting go.")
+    run.add_argument("--log", help="Where to record every step (default: run-<time>.local.json in the repository).")
     run.add_argument("--move_seconds", type=float, default=4.0)
     run.add_argument("--dry-run", action="store_true", help="Compute commands without powering the arm.")
     run.set_defaults(run=cmd_run)

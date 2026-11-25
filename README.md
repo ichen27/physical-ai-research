@@ -19,7 +19,7 @@ This is an early project. Read this section before relying on anything.
 | Ball pickup task | Working in Isaac Lab 3.0.0 |
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
-| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm only the read-only steps have run, up to calibration; **no motor has been driven** |
+| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm, calibration and the start-pose move work; **the first pickup attempt failed** (see [Real arm](#real-arm)) |
 | Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -56,7 +56,7 @@ Known limitations:
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
-| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. Only its read-only steps have run on the real arm |
+| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. The first real pickup attempt failed |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -139,7 +139,11 @@ This check has paid for itself three times: it showed that an early policy depen
 
 ## Real arm
 
-**Only the steps that read have been run on a real arm (2026-11-25): `status`, `clear-errors`, `touch` and `fit-touches`. Nothing here has driven its motors.** The first read found a bug in the driver's error handling, since fixed, which is a fair sample of what to expect from the untested steps. `understudy/dynamixel.py` and `scripts/real_arm.py` are written from the servo documentation and from register addresses that earlier read-and-move scripts used successfully on the author's arm, and their logic is tested against a simulated arm, but the first real run is still to come. Treat it as untested code driving motors: keep a hand on the arm's power switch.
+**The first run on a real arm (2026-11-25) failed, and no pickup has succeeded on hardware.** Calibration and the slow move to the start pose worked. The policy then moved the arm at the servos' full speed, hit the desk and closed the gripper on nothing; after that a bug in this tool let the bus watchdog expire during the hold, and the arm went limp and dropped from the raised pose. No servo reported a fault afterwards.
+
+What changed as a result: `run` now limits how fast joint targets move (`--max_speed`, 0.6 rad/s) and how far they sit from the joint (`--max_lead`, 0.1 rad), never waits on the keyboard while the arm is powered, lowers the arm to where it started even when something goes wrong, and records every step to a file. The limits are outside what the policy was trained on: in MuJoCo it lifts the ball in 63.5% of attempts with them, against 99.5% without. The limited run has not been tried on the arm.
+
+Treat this as lightly tested code driving motors: keep a hand on the arm's power switch.
 
 What the tool changes on the servos: only volatile settings (position gains set to the vendor's 1000, 0, 1000; a 50 ms time-based profile; a 500 ms bus watchdog; the gripper's goal current). It restores them and switches torque off when it exits. It never writes permanent settings and refuses to run unless they already match the vendor follower configuration (time-based drive mode, position modes on the arm joints, current-based position mode on the gripper).
 
