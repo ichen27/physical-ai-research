@@ -28,6 +28,7 @@ from understudy.kinematics import Chain  # noqa: E402
 from understudy.runner import PlacedBall, goals_from_command, run_pickup, sensed_from_reading  # noqa: E402
 
 DEFAULT_CALIBRATION = REPO / "calibration.local.json"
+DEFAULT_TOUCHES = REPO / "touches.local.json"
 BASE_NOTE = (
     "Positions are metres from the centre of the arm's base plate, on the desk: "
     "x forward, y to the arm's left, z up."
@@ -124,6 +125,69 @@ def cmd_calibrate(args) -> None:
         robot._port.closePort()
 
 
+def cmd_touch(args) -> None:
+    import time
+
+    from understudy import touch_calibration
+
+    robot = open_arm(args)
+    try:
+        require_torque_off(robot)
+        reads = []
+        for _ in range(5):
+            reads.append(robot.read().positions[:5])
+            time.sleep(0.1)
+    finally:
+        robot._port.closePort()
+    if max(max(column) - min(column) for column in zip(*reads)) > 3:
+        raise SystemExit("the arm moved while it was being read. Hold it still and try again; nothing was recorded.")
+    touches = touch_calibration.load_touches(args.touches)
+    touches.append(touch_calibration.Touch(tuple(int(t) for t in reads[-1]), args.forward_cm / 100, args.left_cm / 100))
+    touch_calibration.save_touches(args.touches, touches)
+    print(
+        f"recorded touch {len(touches)}: tip on the mark {args.forward_cm:g} cm forward and {args.left_cm:g} cm left "
+        f"of the swivel axis, servo readings {list(touches[-1].ticks)}"
+    )
+    missing = touch_calibration.MIN_TOUCHES - len(touches)
+    print(f"{missing} more needed before a fit" if missing > 0 else "enough for a fit: run fit-touches (more touches make it better)")
+
+
+def cmd_clear_touches(args) -> None:
+    from understudy import touch_calibration
+
+    touch_calibration.save_touches(args.touches, [])
+    print(f"cleared {args.touches}")
+
+
+def cmd_fit_touches(args) -> None:
+    from understudy import touch_calibration
+
+    touches = touch_calibration.load_touches(args.touches)
+    try:
+        fit = touch_calibration.fit(touches, args.signs)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    for number, (touch, error) in enumerate(zip(touches, fit.errors_m), 1):
+        print(f"  touch {number}: mark {touch.forward_m * 100:5.1f} cm forward, {touch.left_m * 100:5.1f} cm left; model tip {error * 1000:5.1f} mm away")
+    print(f"zero points (ticks): {[round(z, 1) for z in fit.zero_ticks]}   typical error {fit.rms_m * 1000:.1f} mm")
+    if fit.ambiguous():
+        print(
+            f"WARNING: a different set of zero points fits nearly as well ({fit.runner_up_rms_m * 1000:.1f} mm). "
+            "Add touches with the arm in different shapes before trusting this."
+        )
+    if fit.rms_m > args.max_error_mm / 1000:
+        raise SystemExit(
+            f"not saved: the typical error is over {args.max_error_mm:g} mm. Check the marks, add touches in "
+            "different arm shapes, or try --signs if a joint may run backwards."
+        )
+    closed, gripper_sign = None, 1
+    if Path(args.calibration).exists():
+        previous = arm.Calibration.load(args.calibration)
+        closed, gripper_sign = previous.gripper_closed_tick, previous.gripper_sign
+    arm.Calibration(tuple(fit.zero_ticks), tuple(args.signs), closed, gripper_sign).save(args.calibration)
+    print(f"saved {args.calibration} (gripper settings kept as they were)")
+
+
 def cmd_check(args) -> None:
     calibration = arm.Calibration.load(args.calibration)
     chain = Chain()
@@ -211,6 +275,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", default="/dev/cu.usbmodem21401", help="Serial port of the arm's USB controller.")
     parser.add_argument("--calibration", default=str(DEFAULT_CALIBRATION))
+    parser.add_argument("--touches", default=str(DEFAULT_TOUCHES))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Show the servos' state. Reads only.").set_defaults(run=cmd_status)
     commands.add_parser(
@@ -219,6 +284,17 @@ def main() -> None:
     calibrate = commands.add_parser("calibrate", help="Capture this arm's encoder offsets by hand. Reads only.")
     calibrate.add_argument("--signs", type=int, nargs=5, default=[1, 1, 1, 1, 1], choices=[1, -1])
     calibrate.set_defaults(run=cmd_calibrate)
+    touch = commands.add_parser(
+        "touch", help="Record the limp arm's pose with the gripper tip on a desk mark. Reads only."
+    )
+    touch.add_argument("forward_cm", type=float, help="Mark's distance from the swivel axis along the ruler line.")
+    touch.add_argument("left_cm", type=float, help="Mark's distance to the left of the ruler line (negative for right).")
+    touch.set_defaults(run=cmd_touch)
+    commands.add_parser("clear-touches", help="Forget the recorded touches.").set_defaults(run=cmd_clear_touches)
+    fit = commands.add_parser("fit-touches", help="Work out the calibration from the recorded touches.")
+    fit.add_argument("--signs", type=int, nargs=5, default=[1, 1, 1, 1, 1], choices=[1, -1])
+    fit.add_argument("--max_error_mm", type=float, default=10.0)
+    fit.set_defaults(run=cmd_fit_touches)
     commands.add_parser("check", help="Test the calibration against marks on the desk. Reads only.").set_defaults(run=cmd_check)
     start = commands.add_parser("start-pose", help="Slow powered move to the start pose and back.")
     start.add_argument("--move_seconds", type=float, default=4.0)

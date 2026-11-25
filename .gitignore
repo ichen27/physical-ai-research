@@ -5,7 +5,7 @@ __pycache__/
 # Isaac Lab training output. Selected results are copied into results/ deliberately.
 logs/
 outputs/
-# Local arm calibration is specific to one physical arm.
-calibration.local.json
+# Local arm calibration and the touches it was fitted from are specific to one physical arm.
+*.local.json
 # Recordings are added deliberately once they are worth showing.
 results/**/*.mp4
