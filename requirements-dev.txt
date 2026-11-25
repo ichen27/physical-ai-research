@@ -1,4 +1,6 @@
 # The library itself uses only the Python standard library.
-# MuJoCo is used by tests that compile the vendor's model of the arm.
+# MuJoCo is used by tests that compile the vendor's model of the arm and run the
+# trained policy on it; ONNX Runtime loads the exported policy.
 mujoco==3.3.7
 numpy
+onnxruntime

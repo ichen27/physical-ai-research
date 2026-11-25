@@ -1,5 +1,7 @@
 # Ball pickup, first policy, 2026-11-24
 
+Superseded by [the version trained with variation](../2026-11-24-varied/README.md), which fixed the stiffness problem described below and found a new one. Kept for the record; `understudy/arm.py` and the task have changed since, so this policy can no longer be re-evaluated with the current code.
+
 The OMX arm picks a foam golf ball off the desk and holds it at a target point. **Simulation only.** It has not been run on a real arm, and the stress tests below say this version should not be expected to work on one yet.
 
 ![Four frames of the simulated arm picking up the ball](pickup-frames.png)

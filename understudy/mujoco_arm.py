@@ -23,6 +23,8 @@ VENDOR_MODEL = (
 )
 SUBSTEPS = 16
 TIMESTEP = 1.0 / (arm.CONTROL_HZ * SUBSTEPS)
+# Time since arrival given to the pose an attempt starts in, so it counts as long since reached.
+_SETTLED_S = 10.0
 
 
 def build_model(
@@ -59,7 +61,17 @@ def build_model(
 class MujocoArm:
     """Implements ``understudy.runner.ArmIO`` on the simulated arm."""
 
-    def __init__(self, model: mujoco.MjModel, calibration: arm.Calibration | None = None, command_delay_steps: int = 0):
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        calibration: arm.Calibration | None = None,
+        command_delay_s: float = 0.0,
+        profile_time_s: float = 0.0,
+        extra_delay_steps: int = 0,
+    ):
+        """``command_delay_s`` is the time before a new command starts to act and
+        ``profile_time_s`` the time the servo then takes to reach it, as in training.
+        ``extra_delay_steps`` holds every command back by whole control steps on top."""
         self.model = model
         self.data = mujoco.MjData(model)
         self.calibration = calibration or arm.Calibration.stock()
@@ -72,8 +84,12 @@ class MujocoArm:
         self._ctrl = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in names]
         self._ball_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
         self._ball_qpos = int(model.jnt_qposadr[int(model.body_jntadr[self._ball_body])])
-        self._delay = command_delay_steps
-        self._queue: list[list[float]] = []
+        self._delay_s = command_delay_s + extra_delay_steps / arm.CONTROL_HZ
+        self._profile_s = profile_time_s
+        # Commands on their way to the servo, newest first, each with the time since it was sent.
+        self._sent: list[tuple[list[float], float]] = []
+        self._start = self._goal = list(runtime.SENSED_START)
+        self._since_arrival = _SETTLED_S
         self.after_step = None  # optional callback, called after each control step
 
     def reset(self, ball_xy: Sequence[float]) -> None:
@@ -86,7 +102,9 @@ class MujocoArm:
         start = list(runtime.SENSED_START)
         for index, angle in zip(self._ctrl, start):
             self.data.ctrl[index] = angle
-        self._queue = [start] * self._delay
+        self._sent = []
+        self._start = self._goal = start
+        self._since_arrival = _SETTLED_S
         mujoco.mj_forward(self.model, self.data)
 
     def ball(self) -> np.ndarray:
@@ -112,12 +130,28 @@ class MujocoArm:
             raise ValueError("six goal positions are needed")
         c = self.calibration
         targets = c.to_rad(ticks[:5]) + [c.finger_to_rad(ticks[5])]
-        self._queue.append(targets)
-        for index, target in zip(self._ctrl, self._queue.pop(0)):
-            self.data.ctrl[index] = target
+        self._sent.insert(0, (targets, 0.0))
 
     def advance(self) -> None:
         for _ in range(SUBSTEPS):
+            # A command reaches the servo after the delay. Until then the servo keeps
+            # following the previous one; when it arrives, the servo heads for it from
+            # wherever its goal has got to, taking the profile time.
+            self._sent = [(targets, age + TIMESTEP) for targets, age in self._sent]
+            self._since_arrival += TIMESTEP
+            arrived = [item for item in self._sent if item[1] >= self._delay_s]
+            if arrived:
+                targets, age = arrived[0]  # the newest one to have arrived
+                self._start = [float(self.data.ctrl[index]) for index in self._ctrl]
+                self._goal = targets
+                self._since_arrival = age - self._delay_s
+                self._sent = [item for item in self._sent if item[1] < self._delay_s]
+            if self._profile_s > 0.0:
+                progress = min(1.0, self._since_arrival / self._profile_s)
+            else:
+                progress = 1.0
+            for index, start, goal in zip(self._ctrl, self._start, self._goal):
+                self.data.ctrl[index] = start + (goal - start) * progress
             mujoco.mj_step(self.model, self.data)
         if self.after_step is not None:
             self.after_step(self)

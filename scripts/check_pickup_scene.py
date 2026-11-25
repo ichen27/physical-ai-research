@@ -73,6 +73,7 @@ def main() -> int:
     finger_id = joint_names.index(arm.GRIPPER_JOINT_NAMES[0])
     start = torch.tensor(pickup.START_POSE, device=env.device)
     scale = cfg.actions.arm_action.scale
+    relative = getattr(cfg.actions.arm_action, "relative", False)
     chain = Chain()
 
     def ball_positions():
@@ -91,7 +92,10 @@ def main() -> int:
         for step in range(steps):
             if correct and step % 10 == 9:
                 command += 0.5 * (wanted - robot.data.joint_pos.torch[:, arm_ids])
-            action[:, :5] = (command - start) / scale
+            if relative:
+                action[:, :5] = (command - robot.data.joint_pos.torch[:, arm_ids]) / scale
+            else:
+                action[:, :5] = (command - start) / scale
             env.step(action)
 
     def report(label):

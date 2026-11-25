@@ -77,6 +77,8 @@ def main() -> None:
         with torch.inference_mode():
             obs, _, dones, _ = env.step(action)
             policy.reset(dones)
+        # The joint targets Isaac Lab derived from that action.
+        steps[-1]["arm_targets"] = base.action_manager.get_term("arm_action").processed_actions[0].tolist()
         if bool(dones[0]):
             break
 

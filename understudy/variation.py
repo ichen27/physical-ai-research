@@ -15,7 +15,8 @@ SERVO_DAMPING_SCALE = (0.5, 1.5)
 ROTOR_INERTIA_SCALE = (0.5, 1.5)
 
 # Time between the policy issuing a command and the servo starting to act on it.
-COMMAND_DELAY_S = (0.0, 0.030)
+# The control step is 33 ms, so the top of this range is a command that lands two steps late.
+COMMAND_DELAY_S = (0.0, 0.066)
 # Time the servo takes to move to each new goal. Zero is a servo with no profile;
 # the vendor follower configuration is 0.050.
 PROFILE_TIME_S = (0.0, 0.080)

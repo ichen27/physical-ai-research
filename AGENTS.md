@@ -4,7 +4,7 @@ Repository: https://github.com/ichen27/understudy (public, MIT). Canonical check
 
 ## What this is
 
-Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is reaching a target point. Stage 2 is picking up a foam golf ball. Both work in simulation only; neither has run on the real arm.
+Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is reaching a target point. Stage 2 is picking up a foam golf ball. Both work in the training simulator only. The pickup does not yet hold the ball in the MuJoCo cross-check, and nothing has run on the real arm.
 
 ## Architecture
 
@@ -19,6 +19,8 @@ Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is 
 - Library and tests: anywhere with Python 3.11+.
 - Training: a Linux NVIDIA GPU host with Isaac Lab. The author uses a rented Brev instance. It bills by the hour, so stop it when a session ends and say so in the handoff. Agree a time budget with the author before starting it.
 - Before training a contact task, run its `scripts/check_*_scene.py` script. A scripted grasp that fails means the scene is wrong, and training would be wasted.
+- After training a pickup policy, run it in MuJoCo with `scripts/mujoco_pickup.py` (no GPU). A result in the training simulator alone is not evidence that a policy will transfer; three separate problems were found only this way.
+- `understudy/runtime.py` and `understudy/runner.py` are the single path from sensor readings to servo commands, used by the MuJoCo cross-check and the real arm alike. Change the policy's inputs or outputs there and in the Isaac Lab task together, re-record `tests/fixtures/pickup_rollout.json` with `scripts/record_rollout.py`, and keep `interface.json` beside every exported policy.
 - Measure every trained policy with the `scripts/evaluate*.py` scripts, including the servo-stiffness stress tests, and record the numbers under `results/`. The training log's own success rate is more lenient and is not the reported figure.
 - Real arm: the arm's USB controller is attached to the author's laptop, not the development machine.
 

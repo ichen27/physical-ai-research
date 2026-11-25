@@ -51,6 +51,44 @@ class ActionTests(unittest.TestCase):
             for target, joint in zip(command.arm_targets, arm.ARM_JOINTS):
                 self.assertTrue(joint.lower <= target <= joint.upper)
 
+    def test_relative_interface_moves_from_the_present_angles(self):
+        relative = runtime.Interface("relative", 0.2)
+        present = [0.1, -0.5, 0.4, 1.0, 0.0]
+        command = runtime.decode_action([1.0, 0.0, -1.0, 0.0, 0.0, 1.0], present, relative)
+        self.assertAlmostEqual(command.arm_targets[0], 0.3)
+        self.assertAlmostEqual(command.arm_targets[1], -0.5)
+        self.assertAlmostEqual(command.arm_targets[2], 0.2)
+        # A zero output holds the arm where it is, wherever that is.
+        hold = runtime.decode_action([0.0] * 6, present, relative)
+        for target, angle in zip(hold.arm_targets, present):
+            self.assertAlmostEqual(target, angle)
+
+    def test_relative_interface_needs_the_present_angles_and_respects_limits(self):
+        relative = runtime.Interface("relative", 0.2)
+        with self.assertRaises(ValueError):
+            runtime.decode_action([0.0] * 6, None, relative)
+        command = runtime.decode_action([100.0] * 5 + [1.0], [0.0] * 5, relative)
+        for target, joint in zip(command.arm_targets, arm.ARM_JOINTS):
+            self.assertEqual(target, joint.upper)
+
+    def test_interface_file_round_trip_and_default(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = Path(tmp) / "policy.onnx"
+            # No file beside the policy: an older, absolute policy.
+            self.assertEqual(runtime.Interface.beside(policy), runtime.Interface("absolute", 0.5))
+            runtime.Interface("relative", 0.2).save(tmp)
+            self.assertEqual(runtime.Interface.beside(policy), runtime.Interface("relative", 0.2))
+        with self.assertRaises(ValueError):
+            runtime.Interface("sideways", 0.2)
+
+    def test_start_command(self):
+        command = runtime.start_command()
+        self.assertEqual(command.arm_targets, pickup.START_POSE)
+        self.assertTrue(command.gripper_open)
+
     def test_rejects_bad_actions(self):
         with self.assertRaises(ValueError):
             runtime.decode_action([0.0] * 5)

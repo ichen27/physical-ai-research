@@ -11,9 +11,12 @@ from __future__ import annotations
 BALL_RADIUS_M = 0.02135
 BALL_MASS_KG = 0.005
 BALL_FRICTION = 1.0
-# Foam loses energy when it rolls or is knocked; a rigid sphere in a simulator does not.
-BALL_LINEAR_DAMPING = 0.5
-BALL_ANGULAR_DAMPING = 2.0
+# The ball rolls freely. An earlier version damped its motion to imitate foam, and
+# policies trained that way knocked a freely rolling ball away: in a second
+# simulator the lift rate fell from 80% to 35%. A ball that rolls more easily
+# than the real one is the safer assumption.
+BALL_LINEAR_DAMPING = 0.0
+BALL_ANGULAR_DAMPING = 0.05
 
 # Finger angle, radians at gripper_joint_1. The second finger mirrors it.
 # At 1.0 rad the fingers are about 80 mm apart where the ball sits.
@@ -36,3 +39,9 @@ LIFTED_HEIGHT_M = 0.05
 # A pickup succeeds when the lifted ball is held within this distance of the target.
 HOLD_RADIUS_M = 0.03
 EPISODE_SECONDS = 5.0
+
+# How the policy's five arm outputs become joint targets. "relative": target is the
+# joint's present angle plus ARM_ACTION_SCALE times the output. Policies trained
+# before this was introduced used "absolute": start pose plus 0.5 times the output.
+ARM_ACTION_MODE = "relative"
+ARM_ACTION_SCALE = 0.2

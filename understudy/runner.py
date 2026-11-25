@@ -101,13 +101,17 @@ def run_pickup(
     seconds: float,
     advance: Callable[[], None],
     send: bool = True,
+    interface: runtime.Interface | None = None,
 ) -> list[Step]:
     """Run the policy for ``seconds`` at the control rate.
 
     ``advance`` is called once per control step after the command is sent: on a
     real arm it waits for the next tick of the clock, in a simulation it steps
-    the physics. With ``send`` false nothing is written to the arm.
+    the physics. With ``send`` false nothing is written to the arm. ``interface``
+    defaults to the one saved with the policy, if the policy carries one.
     """
+    if interface is None:
+        interface = getattr(policy, "interface", runtime.Interface())
     for axis, value in zip("xyz", hold_target):
         low, high = pickup.HOLD_TARGET[axis]
         if not low <= value <= high:
@@ -121,7 +125,7 @@ def run_pickup(
         check_safe(angles[:5])
         ball_position = tuple(ball.position(angles[:5], angles[5], gripper_open))
         action = list(policy(runtime.build_observation(angles, velocities, ball_position, hold_target, previous_action)))
-        command = runtime.decode_action(action)
+        command = runtime.decode_action(action, angles[:5], interface)
         if send:
             io.write_goals(goals_from_command(command, calibration))
         steps.append(Step(tuple(angles), ball_position, tuple(action), command))

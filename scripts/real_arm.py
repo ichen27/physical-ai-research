@@ -124,7 +124,7 @@ def cmd_start_pose(args) -> None:
             raise SystemExit("stopped; nothing was changed.")
         rest = robot.read().positions
         robot.configure()
-        start = goals_from_command(runtime.decode_action([0.0] * runtime.ACTION_SIZE), calibration)
+        start = goals_from_command(runtime.start_command(), calibration)
         robot.move_slowly(start, args.move_seconds)
         angles, _ = sensed_from_reading(robot.read(), calibration)
         print("reached (rad):", [round(a, 3) for a in angles], "wanted:", [round(a, 3) for a in runtime.SENSED_START])
@@ -157,7 +157,7 @@ def cmd_run(args) -> None:
             raise SystemExit("stopped; nothing was changed.")
         rest = robot.read().positions
         robot.configure()
-        start = goals_from_command(runtime.decode_action([0.0] * runtime.ACTION_SIZE), calibration)
+        start = goals_from_command(runtime.start_command(), calibration)
         robot.move_slowly(start, args.move_seconds)
         steps = run_pickup(robot, policy, calibration, ball, args.target, args.seconds, advance=robot.advance)
         last = steps[-1]

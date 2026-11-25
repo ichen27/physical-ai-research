@@ -20,7 +20,7 @@ class FakeArm:
 
     def __init__(self, calibration):
         self.calibration = calibration
-        start = runtime.decode_action([0.0] * runtime.ACTION_SIZE)
+        start = runtime.start_command()
         self.positions = goals_from_command(start, calibration)
         self.written = []
 
@@ -38,7 +38,7 @@ class FakeArm:
 class ConversionTests(unittest.TestCase):
     def test_start_pose_round_trips_through_ticks(self):
         for calibration in (arm.Calibration.stock(), ODD):
-            goals = goals_from_command(runtime.decode_action([0.0] * 6), calibration)
+            goals = goals_from_command(runtime.start_command(), calibration)
             angles, velocities = sensed_from_reading(ArmReading(tuple(goals), (0,) * 6), calibration)
             for angle, wanted in zip(angles, runtime.SENSED_START):
                 self.assertAlmostEqual(angle, wanted, delta=arm.RAD_PER_TICK)
@@ -65,7 +65,7 @@ class ConversionTests(unittest.TestCase):
     def test_gripper_needs_calibration(self):
         without = arm.Calibration((2048.0,) * 5, (1,) * 5)
         with self.assertRaises(ValueError):
-            goals_from_command(runtime.decode_action([0.0] * 6), without)
+            goals_from_command(runtime.start_command(), without)
 
     def test_calibration_file_round_trip(self):
         import tempfile

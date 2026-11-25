@@ -53,12 +53,28 @@ def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None)
             recorder.capture(arm_sim)
 
     sim.after_step = after_step
-    run_pickup(sim, policy, sim.calibration, ball, target, pickup.EPISODE_SECONDS, advance=sim.advance)
+    stopped = False
+    try:
+        run_pickup(sim, policy, sim.calibration, ball, target, pickup.EPISODE_SECONDS, advance=sim.advance)
+    except RuntimeError:
+        # The runner's safety check stopped the arm, as it would on hardware. The attempt counts as failed.
+        stopped = True
+    ever_lifted = bool(heights) and max(heights) > pickup.LIFTED_HEIGHT_M
+    if stopped or len(heights) < FINAL_WINDOW_STEPS:
+        return {"lifted": False, "held": False, "ever_lifted": ever_lifted, "height": float(sim.ball()[2]),
+                "distance": float("nan"), "stopped": True}
 
     height = float(np.mean(heights[-FINAL_WINDOW_STEPS:]))
     distance = float(np.mean(distances[-FINAL_WINDOW_STEPS:]))
     lifted = height > pickup.LIFTED_HEIGHT_M
-    return {"lifted": lifted, "held": lifted and distance < pickup.HOLD_RADIUS_M, "height": height, "distance": distance}
+    return {
+        "lifted": lifted,
+        "held": lifted and distance < pickup.HOLD_RADIUS_M,
+        "height": height,
+        "distance": distance,
+        "ever_lifted": ever_lifted,
+        "stopped": False,
+    }
 
 
 class Recorder:
@@ -95,7 +111,11 @@ def main() -> None:
     parser.add_argument("--camera_bias", type=float, default=variation.BALL_POSITION_BIAS_M)
     parser.add_argument("--camera_noise", type=float, default=variation.BALL_POSITION_NOISE_M)
     parser.add_argument("--camera_latency", type=int, nargs=2, default=list(variation.CAMERA_LATENCY_STEPS))
-    parser.add_argument("--command_delay", type=int, default=1, help="Command delay in control steps.")
+    parser.add_argument("--command_delay", type=float, default=0.015, help="Seconds before a command takes effect.")
+    parser.add_argument(
+        "--profile_time", type=float, default=arm.VENDOR_PROFILE_TIME_S, help="Seconds a servo takes to reach a new goal."
+    )
+    parser.add_argument("--extra_delay_steps", type=int, default=0, help="Whole control steps of extra command delay.")
     parser.add_argument(
         "--ball_source",
         choices=["camera", "placed"],
@@ -103,14 +123,20 @@ def main() -> None:
         help="camera: a simulated camera tracks the ball. placed: no camera; the ball is assumed to be where it "
         "was put until the gripper holds it (understudy.runner.PlacedBall).",
     )
+    parser.add_argument("--gripper_force_scale", type=float, default=1.0, help="Multiple of the vendor gripper force.")
     parser.add_argument("--output", help="Write the results to this JSON file.")
     parser.add_argument("--video", help="Record the first attempts to this MP4 file (needs ffmpeg).")
     parser.add_argument("--video_attempts", type=int, default=3)
     args = parser.parse_args()
     policy = runtime.OnnxPolicy(args.policy)
     sim = MujocoArm(
-        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale), command_delay_steps=args.command_delay
+        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale),
+        command_delay_s=args.command_delay,
+        profile_time_s=args.profile_time,
+        extra_delay_steps=args.extra_delay_steps,
     )
+    gripper = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_ACTUATOR, arm.GRIPPER_JOINT_NAMES[0])
+    sim.model.actuator_forcerange[gripper] *= args.gripper_force_scale
     rng = random.Random(args.seed)
     recorder = Recorder(sim.model, Path(args.video)) if args.video else None
 
@@ -129,14 +155,19 @@ def main() -> None:
         "servo_stiffness_scale": args.stiffness_scale,
         "ball_mass_kg": args.ball_mass,
         "ball_friction": args.ball_friction,
+        "gripper_force_scale": args.gripper_force_scale,
         "camera_bias_m": args.camera_bias,
         "camera_noise_m": args.camera_noise,
         "camera_latency_steps": list(args.camera_latency),
-        "command_delay_steps": args.command_delay,
+        "command_delay_s": args.command_delay,
+        "servo_profile_time_s": args.profile_time,
+        "extra_delay_steps": args.extra_delay_steps,
         "ball_source": args.ball_source,
         "seed": args.seed,
         "success_rate": sum(o["held"] for o in outcomes) / len(outcomes),
         "lifted_rate": len(lifted) / len(outcomes),
+        "lifted_at_some_point_rate": sum(o["ever_lifted"] for o in outcomes) / len(outcomes),
+        "safety_stop_rate": sum(o["stopped"] for o in outcomes) / len(outcomes),
         "median_final_ball_height_m": float(np.median([o["height"] for o in outcomes])),
         "median_distance_to_target_when_lifted_m": float(np.median([o["distance"] for o in lifted])) if lifted else None,
     }

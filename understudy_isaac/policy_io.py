@@ -10,6 +10,8 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
 from isaaclab_tasks.utils import load_cfg_from_registry
 from rsl_rl.runners import OnPolicyRunner
 
+from understudy.runtime import Interface
+
 
 def load_policy(task: str, env_cfg, checkpoint: str, export_dir: str | Path, render_mode: str | None = None):
     """Create the environment, load ``checkpoint`` and write ``policy.pt`` and ``policy.onnx``.
@@ -27,4 +29,6 @@ def load_policy(task: str, env_cfg, checkpoint: str, export_dir: str | Path, ren
     export_dir.mkdir(parents=True, exist_ok=True)
     runner.export_policy_to_jit(path=str(export_dir), filename="policy.pt")
     runner.export_policy_to_onnx(path=str(export_dir), filename="policy.onnx")
+    arm_action = env_cfg.actions.arm_action
+    Interface("relative" if getattr(arm_action, "relative", False) else "absolute", float(arm_action.scale)).save(export_dir)
     return env, policy

@@ -8,6 +8,7 @@ meaningful for the real arm.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -16,7 +17,45 @@ from . import arm, pickup
 
 OBSERVATION_SIZE = 28
 ACTION_SIZE = 6
-ARM_ACTION_SCALE = 0.5
+INTERFACE_FILE = "interface.json"
+
+
+@dataclass(frozen=True)
+class Interface:
+    """How one trained policy's arm outputs become joint targets.
+
+    ``absolute``: target = start pose + scale * output.
+    ``relative``: target = the joint's present angle + scale * output.
+    Saved as ``interface.json`` beside the exported policy.
+    """
+
+    arm_action: str = "absolute"
+    arm_action_scale: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.arm_action not in ("absolute", "relative"):
+            raise ValueError(f"unknown arm action mode {self.arm_action!r}")
+        if self.arm_action_scale <= 0:
+            raise ValueError("arm action scale must be positive")
+
+    @classmethod
+    def current(cls) -> "Interface":
+        """The interface policies are trained with now."""
+        return cls(pickup.ARM_ACTION_MODE, pickup.ARM_ACTION_SCALE)
+
+    @classmethod
+    def beside(cls, policy_path: str | Path) -> "Interface":
+        """Read the interface saved with a policy. Policies exported before the file existed were absolute."""
+        path = Path(policy_path).parent / INTERFACE_FILE
+        if not path.exists():
+            return cls()
+        data = json.loads(path.read_text())
+        return cls(str(data["arm_action"]), float(data["arm_action_scale"]))
+
+    def save(self, directory: str | Path) -> None:
+        text = json.dumps({"arm_action": self.arm_action, "arm_action_scale": self.arm_action_scale}, indent=2)
+        (Path(directory) / INTERFACE_FILE).write_text(text + "\n")
+
 # Orientation part of the hold target. The policy was trained with a constant zero rotation (x, y, z, w).
 TARGET_QUATERNION = (0.0, 0.0, 0.0, 1.0)
 
@@ -65,14 +104,30 @@ def build_observation(
     return [float(v) for v in observation]
 
 
-def decode_action(action: Sequence[float]) -> Command:
-    """Turn the policy's raw output into joint targets and a gripper command."""
+def decode_action(
+    action: Sequence[float], joint_angles: Sequence[float] | None = None, interface: Interface = Interface()
+) -> Command:
+    """Turn the policy's raw output into joint targets and a gripper command.
+
+    ``joint_angles`` are the present arm joint angles, needed for a relative interface.
+    """
     if len(action) != ACTION_SIZE:
         raise ValueError(f"action needs {ACTION_SIZE} values, got {len(action)}")
     if any(v != v for v in action):
         raise ValueError("action contains NaN")
-    targets = [start + ARM_ACTION_SCALE * a for start, a in zip(pickup.START_POSE, action[:5])]
+    if interface.arm_action == "relative":
+        if joint_angles is None or len(joint_angles) < 5:
+            raise ValueError("a relative interface needs the five present arm joint angles")
+        base = joint_angles[:5]
+    else:
+        base = pickup.START_POSE
+    targets = [angle + interface.arm_action_scale * a for angle, a in zip(base, action[:5])]
     return Command(tuple(arm.clamp_to_limits(targets)), gripper_open=action[5] >= 0.0)
+
+
+def start_command() -> Command:
+    """Hold the start pose with the gripper open."""
+    return Command(tuple(pickup.START_POSE), gripper_open=True)
 
 
 class OnnxPolicy:
@@ -82,6 +137,7 @@ class OnnxPolicy:
         import numpy
         import onnxruntime
 
+        self.interface = Interface.beside(path)
         self._numpy = numpy
         self._session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         (model_input,) = self._session.get_inputs()
