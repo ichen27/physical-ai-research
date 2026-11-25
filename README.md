@@ -19,7 +19,7 @@ This is an early project. Read this section before relying on anything.
 | Ball pickup task | Working in Isaac Lab 3.0.0 |
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
-| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm only the read-only `status` step has run; **no motor has been driven** |
+| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm only the read-only steps have run, up to calibration; **no motor has been driven** |
 | Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -56,7 +56,7 @@ Known limitations:
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
-| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. Only `status` has run on the real arm |
+| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. Only its read-only steps have run on the real arm |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -139,24 +139,40 @@ This check has paid for itself three times: it showed that an early policy depen
 
 ## Real arm
 
-**Only the first step, `status`, has been run on a real arm (2026-11-25); nothing here has driven its motors.** That first read found a bug in the driver's error handling, since fixed, which is a fair sample of what to expect from the untested steps. `understudy/dynamixel.py` and `scripts/real_arm.py` are written from the servo documentation and from register addresses that earlier read-and-move scripts used successfully on the author's arm, and their logic is tested against a simulated arm, but the first real run is still to come. Treat it as untested code driving motors: keep a hand on the arm's power switch.
+**Only the steps that read have been run on a real arm (2026-11-25): `status`, `clear-errors`, `touch` and `fit-touches`. Nothing here has driven its motors.** The first read found a bug in the driver's error handling, since fixed, which is a fair sample of what to expect from the untested steps. `understudy/dynamixel.py` and `scripts/real_arm.py` are written from the servo documentation and from register addresses that earlier read-and-move scripts used successfully on the author's arm, and their logic is tested against a simulated arm, but the first real run is still to come. Treat it as untested code driving motors: keep a hand on the arm's power switch.
 
 What the tool changes on the servos: only volatile settings (position gains set to the vendor's 1000, 0, 1000; a 50 ms time-based profile; a 500 ms bus watchdog; the gripper's goal current). It restores them and switches torque off when it exits. It never writes permanent settings and refuses to run unless they already match the vendor follower configuration (time-based drive mode, position modes on the arm joints, current-based position mode on the gripper).
 
-Go through these in order. The first three only read.
+Go through these in order. Everything before `start-pose` only reads.
 
 ```sh
 pip install dynamixel_sdk onnxruntime numpy
 python scripts/real_arm.py status          # servo models, modes, errors, temperatures
 python scripts/real_arm.py clear-errors    # only if status reports a hardware error; restarts those servos, nothing moves
-python scripts/real_arm.py calibrate       # you hold the limp arm in the zero pose
-python scripts/real_arm.py check           # you touch the gripper tip to a ruler mark; reports the error
+python scripts/real_arm.py touch 20 0      # tip of the limp arm on a desk mark 20 cm from the swivel axis; repeat at other marks
+python scripts/real_arm.py fit-touches     # works out the calibration from the touches and reports the error
+python scripts/real_arm.py where           # tip on the spot where the ball will sit; prints the position to give to --ball
 python scripts/real_arm.py start-pose      # first powered motion: a slow move to the start pose and back
 python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --ball 0.21 0.0 --dry-run
 python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --ball 0.21 0.0
 ```
 
-Positions are metres from the centre of the arm's base plate, on the desk: x forward, y to the arm's left.
+Positions are metres in the arm model's frame, on the desk: x forward, y to the arm's left. Its origin is 1.1 cm in front of the swivel axis. The simplest way to get a position is to rest the limp arm's gripper tip on the spot and run `where`.
+
+### Calibrating by touches
+
+An arm that has been through LeRobot's calibration has had its servos' zero offsets rewritten, so a reading of 2048 no longer means the model's zero pose. On the author's arm the elbow was 88 degrees out. `touch` and `fit-touches` find the true zero points:
+
+1. Fix the base to the desk. Lay a ruler straight out from the swivel axis (the vertical axis the whole arm turns about), with its zero on the axis.
+2. Close the gripper. With the arm limp, rest the tip of the gripper on the ruler at a known distance, keep it still, and run `touch DISTANCE_CM 0`.
+3. Do this four or more times: at least three different distances across the arm's reach (for example 14, 20 and 28 cm), and one distance twice with the arm in clearly different shapes.
+4. Run `fit-touches`. It prints how far the model's tip is from each mark, in distance and in height, and saves `calibration.local.json` unless the typical error is over 10 mm.
+
+The shoulder, elbow and wrist-bend zero points are fitted from each touch's distance and height only, which a base that turned on the spot does not disturb. The swivel's zero point is the average direction of the marks and is only as good as the base stayed put; `fit-touches` reports how much the touches disagree. It need not be exact: a wrong swivel zero turns the arm's whole frame about the swivel axis, and a ball position read with `where` is turned with it.
+
+The author's arm, from four touches: typical error 3.6 mm, worst 5.3 mm (in height). Every touch has the tip on the desk, so this says less about accuracy with the gripper raised.
+
+`calibrate` (hold the arm in the zero pose by eye) and `check` (compare the tip against typed-in marks) are the older, rougher route and are still there.
 
 Two things are missing for a proper run:
 
@@ -165,7 +181,7 @@ Two things are missing for a proper run:
 
 ### Calibration file
 
-`understudy.arm.Calibration` maps a real arm's encoder readings to the model's joint angles. `scripts/real_arm.py calibrate` writes it to `calibration.local.json`, which is not committed because it belongs to one physical arm:
+`understudy.arm.Calibration` maps a real arm's encoder readings to the model's joint angles. `scripts/real_arm.py fit-touches` writes it to `calibration.local.json`, which is not committed because it belongs to one physical arm:
 
 ```json
 {"zero_ticks": [2048, 2048, 2048, 2048, 2048], "signs": [1, 1, 1, 1, 1], "gripper_closed_tick": 1740, "gripper_sign": 1}

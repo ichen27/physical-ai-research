@@ -2,16 +2,24 @@
 
 Posing an arm by eye in its zero pose is good to a few degrees, which is
 centimetres at the gripper. Touching the closed gripper's tip to marks at
-measured places on the desk, with the arm limp, gives three equations per touch
-(the tip's x, y and height) for four unknowns: the encoder reading at zero of
-the swivel, shoulder, elbow and wrist-bend joints. Four or more touches in
-different arm shapes fix them by least squares, and what is left over says how
-good the fit is.
+measured places on the desk, with the arm limp, gives two equations per touch
+that do not depend on the swivel: the tip's distance from the swivel axis and
+its height above the desk. The unknowns are the encoder readings at zero of the
+shoulder, elbow and wrist-bend joints. Four or more touches at different
+distances and in different arm shapes fix them by least squares, and what is
+left over says how good the fit is.
 
 Marks are measured from the swivel axis, the one physical reference that is
 easy to find: ``forward`` along a ruler line laid outward from it, ``left``
-across that line. The ruler line defines "straight ahead"; the swivel's zero
-point is fitted to it.
+across that line.
+
+The swivel's zero point is taken from the direction of the marks, averaged over
+the touches, and is only as good as the base stayed put: a base that turns a
+little on the desk between touches moves it by as much. On the first real arm
+two touches of one mark read 12 degrees apart. That is why the other three
+joints are fitted without it, and why it need not be exact: a wrong swivel zero
+turns the arm's whole frame about the swivel axis, so a ball position that was
+itself found by touching the tip to the spot is turned by the same amount.
 """
 
 from __future__ import annotations
@@ -30,7 +38,7 @@ from .kinematics import Chain
 
 # The swivel axis in the model's base frame: the vendor URDF's joint1 origin.
 SWIVEL_AXIS_X_M = -0.01125
-FITTED_JOINTS = 4  # wrist roll hardly moves the tip, so its zero point is not fitted
+FITTED_JOINTS = (1, 2, 3)  # shoulder, elbow, wrist bend; wrist roll hardly moves the tip
 MIN_TOUCHES = 4
 DISTINCT_TICKS = 60.0  # two fits further apart than this (about 5 degrees) are different answers
 
@@ -47,13 +55,18 @@ class Touch:
         """The mark in the model's base frame."""
         return (self.forward_m + SWIVEL_AXIS_X_M, self.left_m, 0.0)
 
+    def distance_m(self) -> float:
+        """How far the mark is from the swivel axis."""
+        return math.hypot(self.forward_m, self.left_m)
+
 
 @dataclass(frozen=True)
 class Fit:
     zero_ticks: tuple[float, ...]  # all five arm joints; the last is passed through
-    errors_m: tuple[float, ...]  # distance from the model's tip to each mark
+    errors_m: tuple[tuple[float, float], ...]  # per touch: model minus mark, in distance and in height
     rms_m: float
     runner_up_rms_m: float | None  # best fit that is a different answer, if one was found
+    swivel_spread_rad: float  # furthest any touch's direction lies from the swivel zero
 
     def ambiguous(self) -> bool:
         """True if a clearly different set of zero points fits almost as well."""
@@ -77,6 +90,16 @@ def tip_errors(zero_ticks: Sequence[float], touches: Sequence[Touch], signs: Seq
     for touch in touches:
         angles = [arm.ticks_to_rad(tick, zero, sign) for tick, zero, sign in zip(touch.ticks, zero_ticks, signs)]
         out.extend(np.subtract(chain.tip_position(angles), touch.mark()))
+    return np.array(out)
+
+
+def reach_errors(zero_ticks: Sequence[float], touches: Sequence[Touch], signs: Sequence[int], chain: Chain) -> np.ndarray:
+    """Model minus mark, two numbers per touch: distance from the swivel axis, and height."""
+    out = []
+    for touch in touches:
+        angles = [arm.ticks_to_rad(tick, zero, sign) for tick, zero, sign in zip(touch.ticks, zero_ticks, signs)]
+        x, y, z = chain.tip_position(angles)
+        out.extend((math.hypot(x - SWIVEL_AXIS_X_M, y) - touch.distance_m(), z))
     return np.array(out)
 
 
@@ -110,33 +133,28 @@ def fit(
     roll_zero_tick: float = arm.STOCK_ZERO_TICK,
     chain: Chain | None = None,
 ) -> Fit:
-    """Zero points of the first four arm joints that best put the model's tip on the marks."""
+    """Zero points of the shoulder, elbow and wrist bend that best put the model's tip on the marks."""
     if len(touches) < MIN_TOUCHES:
         raise ValueError(f"{MIN_TOUCHES} or more touches are needed; {len(touches)} given")
     chain = chain or Chain()
+    turn = arm.TICKS_PER_REV
 
-    def residual(first_four: np.ndarray) -> np.ndarray:
-        return tip_errors([*first_four, roll_zero_tick], touches, signs, chain)
+    def residual(fitted: np.ndarray) -> np.ndarray:
+        return reach_errors([0.0, *fitted, roll_zero_tick], touches, signs, chain)
 
-    # The swivel's zero follows from which way each mark lies; the other three
-    # joints are started from every quarter turn, since a wrong start can settle
-    # on a wrong answer.
-    swivel = np.mean(
-        [t.ticks[0] - signs[0] * math.atan2(t.left_m, t.forward_m) / arm.RAD_PER_TICK for t in touches]
-    )
+    # Started from every quarter turn, since a wrong start can settle on a wrong answer.
     quarter_turns = (1024.0, 2048.0, 3072.0, 4096.0)
     found = sorted(
         (
             (cost, tuple(zero))
             for zero, cost in (
-                _refine(np.array([swivel, *start]), residual) for start in itertools.product(quarter_turns, repeat=3)
+                _refine(np.array(start), residual) for start in itertools.product(quarter_turns, repeat=len(FITTED_JOINTS))
             )
         ),
         key=lambda item: item[0],
     )
 
     def same_pose(a: Sequence[float], b: Sequence[float]) -> bool:
-        turn = arm.TICKS_PER_REV
         return all(abs((x - y + turn / 2) % turn - turn / 2) < DISTINCT_TICKS for x, y in zip(a, b))
 
     best_cost, best = found[0]
@@ -144,14 +162,28 @@ def fit(
     count = len(touches)
     # A zero point a whole turn away fits equally well but would report angles a
     # whole turn out. Keep the one that puts the touched poses within half a turn.
-    turn = arm.TICKS_PER_REV
-    middles = [np.mean([touch.ticks[joint] for touch in touches]) for joint in range(FITTED_JOINTS)]
+    middles = [np.mean([touch.ticks[joint] for touch in touches]) for joint in FITTED_JOINTS]
     best = tuple(zero + turn * round((middle - zero) / turn) for zero, middle in zip(best, middles))
-    zero_ticks = (*[float(v) for v in best], float(roll_zero_tick))
-    per_touch = tip_errors(zero_ticks, touches, signs, chain).reshape(count, 3)
+
+    # The swivel's zero from which way each mark lies, allowing for the model's
+    # tip sitting a little to one side of the swivel axis. It played no part above.
+    def swivel_zero(touch: Touch) -> float:
+        angles = [0.0] + [
+            arm.ticks_to_rad(touch.ticks[j], zero, signs[j]) for j, zero in zip((1, 2, 3, 4), (*best, roll_zero_tick))
+        ]
+        x, y, _ = chain.tip_position(angles)
+        turned = math.atan2(touch.left_m, touch.forward_m) - math.atan2(y, x - SWIVEL_AXIS_X_M)
+        return touch.ticks[0] - signs[0] * turned / arm.RAD_PER_TICK
+
+    bearings = [swivel_zero(touch) for touch in touches]
+    swivel = float(np.mean(bearings))
+    swivel_spread = max(abs(b - swivel) for b in bearings) * arm.RAD_PER_TICK
+    zero_ticks = (swivel, *[float(v) for v in best], float(roll_zero_tick))
+    per_touch = reach_errors(zero_ticks, touches, signs, chain).reshape(count, 2)
     return Fit(
         zero_ticks=zero_ticks,
-        errors_m=tuple(float(np.linalg.norm(row)) for row in per_touch),
+        errors_m=tuple((float(row[0]), float(row[1])) for row in per_touch),
         rms_m=math.sqrt(best_cost / count),
         runner_up_rms_m=None if runner_up is None else math.sqrt(runner_up / count),
+        swivel_spread_rad=float(swivel_spread),
     )

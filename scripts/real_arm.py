@@ -1,12 +1,13 @@
 """Use a trained pickup policy on the real OMX follower arm.
 
-ONLY THE status STEP HAS RUN ON A REAL ARM; nothing here has driven its motors yet. Read the "Real arm" section of the README first, keep
+ONLY THE STEPS THAT READ HAVE RUN ON A REAL ARM; nothing here has driven its motors yet. Read the "Real arm" section of the README first, keep
 a hand on the arm's power switch, and go through the steps in order:
 
     python scripts/real_arm.py status                      # reads only
     python scripts/real_arm.py clear-errors                # only if status reports a hardware error
-    python scripts/real_arm.py calibrate                   # reads only; you pose the arm by hand
-    python scripts/real_arm.py check                       # reads only; you touch the gripper to a mark
+    python scripts/real_arm.py touch 20 0                  # reads only; tip on a desk mark, four or more times
+    python scripts/real_arm.py fit-touches                 # works out and saves the calibration
+    python scripts/real_arm.py where                       # reads only; tip on the spot where the ball will sit
     python scripts/real_arm.py start-pose                  # first powered motion: slow move to the start pose
     python scripts/real_arm.py run --policy <policy.onnx> --ball 0.21 0.0 --dry-run
     python scripts/real_arm.py run --policy <policy.onnx> --ball 0.21 0.0
@@ -17,6 +18,7 @@ Needs: pip install dynamixel_sdk onnxruntime numpy
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -30,8 +32,8 @@ from understudy.runner import PlacedBall, goals_from_command, run_pickup, sensed
 DEFAULT_CALIBRATION = REPO / "calibration.local.json"
 DEFAULT_TOUCHES = REPO / "touches.local.json"
 BASE_NOTE = (
-    "Positions are metres from the centre of the arm's base plate, on the desk: "
-    "x forward, y to the arm's left, z up."
+    "Positions are metres in the arm model's frame, on the desk: x forward, y to the arm's left, z up. "
+    "Its origin is 1.1 cm in front of the swivel axis. The 'where' step reads a position off the arm itself."
 )
 
 
@@ -167,9 +169,19 @@ def cmd_fit_touches(args) -> None:
         fit = touch_calibration.fit(touches, args.signs)
     except ValueError as error:
         raise SystemExit(str(error)) from None
-    for number, (touch, error) in enumerate(zip(touches, fit.errors_m), 1):
-        print(f"  touch {number}: mark {touch.forward_m * 100:5.1f} cm forward, {touch.left_m * 100:5.1f} cm left; model tip {error * 1000:5.1f} mm away")
+    for number, (touch, (reach, height)) in enumerate(zip(touches, fit.errors_m), 1):
+        print(
+            f"  touch {number}: mark {touch.distance_m() * 100:5.1f} cm from the swivel axis; "
+            f"model tip {reach * 1000:+5.1f} mm in distance, {height * 1000:+5.1f} mm in height"
+        )
     print(f"zero points (ticks): {[round(z, 1) for z in fit.zero_ticks]}   typical error {fit.rms_m * 1000:.1f} mm")
+    spread = math.degrees(fit.swivel_spread_rad)
+    print(f"swivel zero: the touches disagree by up to {spread:.1f} degrees about which way is straight ahead")
+    if spread > 3:
+        print(
+            "  The base probably turned between touches. Distance and height are not affected. Give the ball's\n"
+            "  position by touching the tip to its spot (the 'where' step), so the swivel's zero cancels out."
+        )
     if fit.ambiguous():
         print(
             f"WARNING: a different set of zero points fits nearly as well ({fit.runner_up_rms_m * 1000:.1f} mm). "
@@ -186,6 +198,20 @@ def cmd_fit_touches(args) -> None:
         closed, gripper_sign = previous.gripper_closed_tick, previous.gripper_sign
     arm.Calibration(tuple(fit.zero_ticks), tuple(args.signs), closed, gripper_sign).save(args.calibration)
     print(f"saved {args.calibration} (gripper settings kept as they were)")
+
+
+def cmd_where(args) -> None:
+    calibration = arm.Calibration.load(args.calibration)
+    robot = open_arm(args)
+    try:
+        require_torque_off(robot)
+        angles, _ = sensed_from_reading(robot.read(), calibration)
+    finally:
+        robot._port.closePort()
+    x, y, z = Chain().tip_position(angles[:5])
+    print(f"gripper tip: x={x:.3f} y={y:.3f} z={z:.3f} (metres, arm model's frame)")
+    print(f"if the tip is resting on the desk where the ball will sit, the height should read near zero: it is {z * 1000:+.0f} mm")
+    print(f"to put the ball there: run ... --ball {x:.3f} {y:.3f}")
 
 
 def cmd_check(args) -> None:
@@ -295,6 +321,9 @@ def main() -> None:
     fit.add_argument("--signs", type=int, nargs=5, default=[1, 1, 1, 1, 1], choices=[1, -1])
     fit.add_argument("--max_error_mm", type=float, default=10.0)
     fit.set_defaults(run=cmd_fit_touches)
+    commands.add_parser(
+        "where", help="Show where the calibration says the limp arm's gripper tip is. Reads only."
+    ).set_defaults(run=cmd_where)
     commands.add_parser("check", help="Test the calibration against marks on the desk. Reads only.").set_defaults(run=cmd_check)
     start = commands.add_parser("start-pose", help="Slow powered move to the start pose and back.")
     start.add_argument("--move_seconds", type=float, default=4.0)

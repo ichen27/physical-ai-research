@@ -45,8 +45,35 @@ class FittingZeroPoints(unittest.TestCase):
         for found, true in zip(fit.zero_ticks[:4], TRUE_ZERO[:4]):
             self.assertAlmostEqual(found, true, delta=3)  # ticks are whole numbers, so not exact
         self.assertLess(fit.rms_m, 0.001)
-        self.assertLess(max(fit.errors_m), 0.002)
+        self.assertLess(max(abs(e) for pair in fit.errors_m for e in pair), 0.002)
         self.assertFalse(fit.ambiguous())
+        self.assertLess(fit.swivel_spread_rad, 0.01)
+
+    def test_a_base_that_turned_between_touches_spoils_only_the_swivel(self):
+        rng = random.Random(7)
+        turned = []
+        for touch in (touch_on_desk(rng) for _ in range(6)):
+            slip = round(rng.uniform(-0.15, 0.15) / arm.RAD_PER_TICK)  # the base turned up to 9 degrees
+            turned.append(Touch((touch.ticks[0] + slip, *touch.ticks[1:]), touch.forward_m, touch.left_m))
+        fit = touch_calibration.fit(turned)
+        for found, true in zip(fit.zero_ticks[1:4], TRUE_ZERO[1:4]):
+            self.assertAlmostEqual(found, true, delta=3)
+        self.assertLess(fit.rms_m, 0.001)
+        self.assertGreater(fit.swivel_spread_rad, 0.05)
+
+    def test_touches_along_one_line_are_enough(self):
+        """What the first real arm was calibrated with: every mark on the ruler line."""
+        rng = random.Random(21)
+        touches = []
+        while len(touches) < 5:
+            touch = touch_on_desk(rng)
+            distance = touch.distance_m()
+            touches.append(Touch((round(TRUE_ZERO[0]), *touch.ticks[1:]), distance, 0.0))
+        fit = touch_calibration.fit(touches)
+        for found, true in zip(fit.zero_ticks[1:4], TRUE_ZERO[1:4]):
+            self.assertAlmostEqual(found, true, delta=3)
+        # The model's tip sits 1.6 mm to one side, so a mark dead ahead is not quite at swivel zero.
+        self.assertAlmostEqual(fit.zero_ticks[0], TRUE_ZERO[0], delta=10)
 
     def test_copes_with_marks_measured_a_few_millimetres_out(self):
         rng = random.Random(11)
