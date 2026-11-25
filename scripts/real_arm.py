@@ -1,6 +1,6 @@
 """Use a trained pickup policy on the real OMX follower arm.
 
-NOT YET RUN ON HARDWARE. Read the "Real arm" section of the README first, keep
+ONLY THE status STEP HAS RUN ON A REAL ARM; nothing here has driven its motors yet. Read the "Real arm" section of the README first, keep
 a hand on the arm's power switch, and go through the steps in order:
 
     python scripts/real_arm.py status                      # reads only

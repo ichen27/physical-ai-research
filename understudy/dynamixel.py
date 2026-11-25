@@ -1,7 +1,8 @@
 """The real OMX follower arm's servos, behind ``understudy.runner.ArmIO``.
 
-Needs the ``dynamixel_sdk`` package and the arm's USB controller. Nothing in
-this module has been run on hardware yet; see the README before using it.
+Needs the ``dynamixel_sdk`` package and the arm's USB controller. Only the reads
+behind ``status`` and ``check_ready`` have been run on a real arm; nothing here
+has driven its motors yet. See the README before using it.
 
 Only volatile (RAM) settings are changed, and they are put back on shutdown.
 Settings that live in the servos' permanent memory (operating mode, drive mode,

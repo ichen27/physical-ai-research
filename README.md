@@ -19,7 +19,7 @@ This is an early project. Read this section before relying on anything.
 | Ball pickup task | Working in Isaac Lab 3.0.0 |
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
-| Real-arm runner and calibration tool | Written and tested against a simulated arm. **Not yet run on hardware** |
+| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm only the read-only `status` step has run; **no motor has been driven** |
 | Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -45,7 +45,7 @@ Known limitations:
 | `understudy/variation.py` | How much each simulated arm, ball and camera differs during training |
 | `understudy/runtime.py` | The policy's inputs and outputs outside the training simulator |
 | `understudy/runner.py` | Runs a policy on an arm through servo units; used for the real arm and for the MuJoCo cross-check |
-| `understudy/dynamixel.py` | The real arm's servos. **Not yet run on hardware** |
+| `understudy/dynamixel.py` | The real arm's servos. Reads have run on the real arm; **no motor has been driven** |
 | `understudy/mujoco_arm.py` | The vendor's MuJoCo model of the arm behind the same servo interface |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/build_finger_collision.py` | Builds the fingers' collision shapes as convex pieces that keep their claw shape |
@@ -56,7 +56,7 @@ Known limitations:
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
-| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. **Not yet run on hardware** |
+| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. Only `status` has run on the real arm |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -139,7 +139,7 @@ This check has paid for itself three times: it showed that an early policy depen
 
 ## Real arm
 
-**Nothing in this section has been run on hardware.** `understudy/dynamixel.py` and `scripts/real_arm.py` are written from the servo documentation and from register addresses that earlier read-and-move scripts used successfully on the author's arm, and their logic is tested against a simulated arm, but the first real run is still to come. Treat it as untested code driving motors: keep a hand on the arm's power switch.
+**Only the first step, `status`, has been run on a real arm (2026-11-25); nothing here has driven its motors.** That first read found a bug in the driver's error handling, since fixed, which is a fair sample of what to expect from the untested steps. `understudy/dynamixel.py` and `scripts/real_arm.py` are written from the servo documentation and from register addresses that earlier read-and-move scripts used successfully on the author's arm, and their logic is tested against a simulated arm, but the first real run is still to come. Treat it as untested code driving motors: keep a hand on the arm's power switch.
 
 What the tool changes on the servos: only volatile settings (position gains set to the vendor's 1000, 0, 1000; a 50 ms time-based profile; a 500 ms bus watchdog; the gripper's goal current). It restores them and switches torque off when it exits. It never writes permanent settings and refuses to run unless they already match the vendor follower configuration (time-based drive mode, position modes on the arm joints, current-based position mode on the gripper).
 
