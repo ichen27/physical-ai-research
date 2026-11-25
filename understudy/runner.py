@@ -47,7 +47,9 @@ class PlacedBall:
     be cupped between them. This cannot see the ball roll away.
     """
 
-    HELD_FINGER_RAD = 0.15
+    # Fingers closed on nothing read about 0.00 rad. On the simulated rigid ball they stop
+    # above 0.15; on the real foam ball, which squashes, they stopped at 0.13 (2026-11-25).
+    HELD_FINGER_RAD = 0.07
     SETTLE_STEPS = 10
 
     def __init__(self, x: float, y: float, chain: Chain | None = None):

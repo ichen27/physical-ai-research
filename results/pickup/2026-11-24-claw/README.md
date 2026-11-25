@@ -50,6 +50,16 @@ python scripts/mujoco_pickup.py --policy results/pickup/<name>/policy.onnx --att
 | `mujoco-gentle-limits.json` | No camera; joint targets limited to 0.6 rad/s and to 0.1 rad from the joint; 10 s attempts | 63.5% | 63.5% | 1.0% | 39 mm |
 
 - The policy is fast. Unlimited, its fastest joint peaks at a median 5.7 rad/s (about 330 degrees a second), the servos' top speed. That is too violent for a first run on a real arm: on 2026-11-25 it hit the desk. The last row limits it from outside, which brings the peak down to a median 0.85 rad/s and the lift rate down to 63.5%, because the policy was not trained to move that slowly. Running it in slow motion instead did worse (13–38% across 2× to 12×). A policy that is gentle and reliable needs the speed limit in its training.
+- With the limits, where the ball is decides the outcome. Balls lifted at the end out of 20, at 0.3 rad/s and 0.05 rad, by position in the arm model's frame (cm forward; cm to the left, negative for right):
+
+  | Forward | −9 | −6 | −3 | 0 | 3 | 6 | 9 |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 18 | 0 | 0 | 20 | 20 | 20 | 20 | 0 |
+  | 20 | 0 | 0 | 3 | 20 | 20 | 20 | 0 |
+  | 22 | 0 | 0 | 0 | 20 | 20 | 20 | 9 |
+  | 24 | 0 | 0 | 0 | 4 | 17 | 13 | 0 |
+
+  Looser limits (0.6 rad/s with 0.1 rad, 1.0 rad/s with 0.2 rad) give the same one-sided pattern. Without limits the policy lifts the ball everywhere in the trained area (18–24 cm forward, 6 cm either side). Why the limited policy fails to the right has not been investigated.
 - The grasp holds. At the vendor's settings the ball is kept to the end in 96% of attempts, and in 73–89% across a 12-fold range of servo stiffness.
 - The last row is the same policy with the old finger shape: it keeps the ball in 1 attempt of 200. The finger geometry is what decides whether the grip holds.
 - The no-camera row matters for a first hardware test. With the ball's position typed in instead of tracked, the result is as good as with an exact camera, so a real attempt does not have to wait for a camera.

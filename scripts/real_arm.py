@@ -1,6 +1,6 @@
 """Use a trained pickup policy on the real OMX follower arm.
 
-THE FIRST RUN ON A REAL ARM FAILED (it moved at full speed and hit the desk); the speed limits added since are untried on hardware. Read the "Real arm" section of the README first, keep
+ON A REAL ARM this has picked the ball up once, with the speed limits on; without them the arm moved at full speed and hit the desk. Read the "Real arm" section of the README first, keep
 a hand on the arm's power switch, and go through the steps in order:
 
     python scripts/real_arm.py status                      # reads only

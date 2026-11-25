@@ -19,7 +19,7 @@ This is an early project. Read this section before relying on anything.
 | Ball pickup task | Working in Isaac Lab 3.0.0 |
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
-| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm, calibration and the start-pose move work; **the first pickup attempt failed** (see [Real arm](#real-arm)) |
+| Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm it has picked the ball up once, with speed limits, after a failed first attempt (see [Real arm](#real-arm)) |
 | Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -56,7 +56,7 @@ Known limitations:
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
-| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. The first real pickup attempt failed |
+| `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. One real pickup so far, with speed limits |
 | `results/` | Trained policies and their measurements |
 | `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
@@ -139,9 +139,12 @@ This check has paid for itself three times: it showed that an early policy depen
 
 ## Real arm
 
-**The first run on a real arm (2026-11-25) failed, and no pickup has succeeded on hardware.** Calibration and the slow move to the start pose worked. The policy then moved the arm at the servos' full speed, hit the desk and closed the gripper on nothing; after that a bug in this tool let the bus watchdog expire during the hold, and the arm went limp and dropped from the raised pose. No servo reported a fault afterwards.
+**The real arm has picked up the ball once (2026-11-25), on its second attempt, with speed limits on.** One pickup is not a success rate.
 
-What changed as a result: `run` now limits how fast joint targets move (`--max_speed`, 0.6 rad/s) and how far they sit from the joint (`--max_lead`, 0.1 rad), never waits on the keyboard while the arm is powered, lowers the arm to where it started even when something goes wrong, and records every step to a file. The limits are outside what the policy was trained on: in MuJoCo it lifts the ball in 63.5% of attempts with them, against 99.5% without. The limited run has not been tried on the arm.
+- *First attempt, no limits: failed.* The policy moved the arm at the servos' full speed, hit the desk and closed the gripper on nothing. Then a bug in this tool let the bus watchdog expire during the hold, and the arm went limp and dropped from the raised pose. No servo reported a fault afterwards.
+- *Second attempt, `--max_speed 0.3 --max_lead 0.05 --seconds 15`: picked the ball up.* Fastest joint 29 degrees a second. The tip reached 4 mm from the ball's position after 1.8 s, the gripper closed at 2.0 s and held the ball for 6.8 s, up to 18 cm above the desk, then lost it. The tool had not recognised the hold: the foam ball let the fingers close to 0.13 rad and the tool waited for 0.15, so the policy was still being told the ball was on the desk. The threshold is now 0.07; that change is untried on the arm.
+
+What changed after the first attempt: `run` limits how fast joint targets move (`--max_speed`, 0.6 rad/s by default) and how far they sit from the joint (`--max_lead`, 0.1 rad), never waits on the keyboard while the arm is powered, lowers the arm to where it started even when something goes wrong, and records every step to a file. The limits are outside what the policy was trained on. In MuJoCo it lifts the ball in about 62% of attempts with them, against 99.5% without, and the failures are one-sided: balls on the centre line or up to 6 cm to the left are lifted nearly every time, balls 3 cm or more to the right almost never (table in [results/pickup/2026-11-24-claw](results/pickup/2026-11-24-claw/README.md)).
 
 Treat this as lightly tested code driving motors: keep a hand on the arm's power switch.
 
