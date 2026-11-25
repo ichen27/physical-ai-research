@@ -17,6 +17,7 @@ import numpy as np
 
 from . import arm, pickup, runtime
 from .runner import VELOCITY_UNIT_RAD_S, ArmReading
+from .sim_urdf import FINGER_LINKS, finger_collision_files
 
 VENDOR_MODEL = (
     Path(__file__).resolve().parent.parent / "assets" / "open_manipulator_description" / "mujoco" / "omx" / "omx.xml"
@@ -28,12 +29,28 @@ _SETTLED_S = 10.0
 
 
 def build_model(
-    ball_mass: float = pickup.BALL_MASS_KG, ball_friction: float = pickup.BALL_FRICTION, stiffness_scale: float = 1.0
+    ball_mass: float = pickup.BALL_MASS_KG,
+    ball_friction: float = pickup.BALL_FRICTION,
+    stiffness_scale: float = 1.0,
+    claw_fingers: bool = True,
 ) -> mujoco.MjModel:
-    """The vendor arm on a desk with a ball. ``stiffness_scale`` multiplies the arm servo gains."""
+    """The vendor arm on a desk with a ball. ``stiffness_scale`` multiplies the arm servo gains.
+
+    With ``claw_fingers`` the fingers collide as the curved claws they are, using the same
+    convex pieces as the Isaac Lab arm. Without it they collide as the vendor model has them,
+    as the convex hull of each finger, which fills the hollow between the claws.
+    """
     if stiffness_scale <= 0:
         raise ValueError("stiffness_scale must be positive")
     spec = mujoco.MjSpec.from_file(str(VENDOR_MODEL))
+    if claw_fingers:
+        for finger, link in FINGER_LINKS.items():
+            body = spec.body(link)
+            for geom in body.geoms:
+                geom.contype, geom.conaffinity = 0, 0
+            for piece in finger_collision_files(finger):
+                spec.add_mesh(name=piece.stem, file=str(piece))
+                body.add_geom(type=mujoco.mjtGeom.mjGEOM_MESH, meshname=piece.stem, group=3, rgba=[0.2, 0.2, 0.2, 1])
     spec.option.timestep = TIMESTEP
     spec.visual.global_.offwidth, spec.visual.global_.offheight = 960, 720
     world = spec.worldbody

@@ -171,6 +171,14 @@ class OmxBallPickupEnvCfg(LiftEnvCfg):
                 "distribution": "uniform",
             },
         )
+        self.events.gripper_force = EventTerm(
+            func=pickup_mdp.randomize_gripper_force,
+            mode="startup",
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=list(arm.GRIPPER_JOINT_NAMES)),
+                "scale_range": variation.GRIPPER_FORCE_SCALE,
+            },
+        )
         self.events.ball_mass = EventTerm(
             func=mdp.randomize_rigid_body_mass,
             mode="startup",

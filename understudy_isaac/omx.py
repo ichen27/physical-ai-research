@@ -12,7 +12,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
 from understudy import arm
-from understudy.sim_urdf import SIM_URDF
+from understudy.sim_urdf import GENERATED, GENERATED_PACKAGE, SIM_URDF
 
 _DESCRIPTION = Path(__file__).resolve().parent.parent / "assets" / "open_manipulator_description"
 
@@ -20,7 +20,10 @@ _DESCRIPTION = Path(__file__).resolve().parent.parent / "assets" / "open_manipul
 OMX_F_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         asset_path=str(SIM_URDF),
-        ros_package_paths=[{"name": "open_manipulator_description", "path": str(_DESCRIPTION)}],
+        ros_package_paths=[
+            {"name": "open_manipulator_description", "path": str(_DESCRIPTION)},
+            {"name": GENERATED_PACKAGE, "path": str(GENERATED)},
+        ],
         fix_base=True,
         # Keep end_effector_link as its own body; the reach target is measured there.
         merge_fixed_joints=False,

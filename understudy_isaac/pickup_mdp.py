@@ -120,3 +120,15 @@ class seen_ball_position(ManagerTermBase):
         self._last_report = report.clone()
         self._new_attempt[:] = False
         return report
+
+
+def randomize_gripper_force(env, env_ids, scale_range: tuple[float, float], asset_cfg: SceneEntityCfg):
+    """Give each arm's gripper its own squeezing force, as a multiple of the configured limit."""
+    robot = env.scene[asset_cfg.name]
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    joint_ids = asset_cfg.joint_ids
+    limits = robot.data.joint_effort_limits.torch[env_ids][:, joint_ids].clone()
+    low, high = scale_range
+    scale = low + (high - low) * torch.rand(len(env_ids), 1, device=limits.device)
+    robot.write_joint_effort_limit_to_sim(limits * scale, joint_ids=joint_ids, env_ids=env_ids)

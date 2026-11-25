@@ -14,6 +14,9 @@ SERVO_STIFFNESS_SCALE = (0.12, 1.5)
 SERVO_DAMPING_SCALE = (0.5, 1.5)
 ROTOR_INERTIA_SCALE = (0.5, 1.5)
 
+# Gripper squeezing force, as a multiple of the vendor model's.
+GRIPPER_FORCE_SCALE = (0.5, 1.5)
+
 # Time between the policy issuing a command and the servo starting to act on it.
 # The control step is 33 ms, so the top of this range is a command that lands two steps late.
 COMMAND_DELAY_S = (0.0, 0.066)

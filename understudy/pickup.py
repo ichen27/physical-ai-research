@@ -26,9 +26,9 @@ GRIPPER_CLOSED_RAD = 0.0
 # Arm pose each attempt starts from: gripper open, about 12 cm above the desk.
 START_POSE = (0.0, -0.6, 0.5, 1.2, 0.0)
 
-# Where the ball should sit between the fingers, in the end-effector link frame.
-# In the scripted grasp the ball settles with its centre close to the fingertips.
-GRASP_POINT_FROM_TIP = (-0.005, 0.0, 0.0)
+# Where the ball should sit between the fingers, in the end-effector link frame:
+# cupped in the hollow of the two claws, 15 mm back from their tips.
+GRASP_POINT_FROM_TIP = (-0.015, 0.0, 0.0)
 
 # Ball start positions and hold targets, metres in the arm base frame.
 BALL_SPAWN = {"x": (0.18, 0.24), "y": (-0.06, 0.06)}

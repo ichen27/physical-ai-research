@@ -42,9 +42,47 @@ class SimUrdfTests(unittest.TestCase):
         for pose in ([0.0] * 5, [0.5, -0.4, 0.8, 0.3, 0.2]):
             self.assertEqual(original.tip_position(pose), generated.tip_position(pose))
 
+    def test_fingers_collide_as_convex_pieces_that_exist(self):
+        links = {link.get("name"): link for link in self.root.findall("link")}
+        for finger, link_name in sim_urdf.FINGER_LINKS.items():
+            pieces = sim_urdf.finger_collision_files(finger)
+            self.assertEqual(len(pieces), sim_urdf.FINGER_SLABS)
+            names = [c.find("geometry/mesh").get("filename") for c in links[link_name].findall("collision")]
+            self.assertEqual(
+                names, [f"package://{sim_urdf.GENERATED_PACKAGE}/collision/{piece.name}" for piece in pieces]
+            )
+            for piece in pieces:
+                self.assertTrue(piece.is_file(), f"{piece} is missing; run scripts/build_finger_collision.py")
+                self.assertFalse(piece.read_bytes().startswith(b"solid"))  # binary STL, not ASCII
+
+    def test_finger_pieces_leave_the_hollow_between_the_claws(self):
+        """A ball cupped between the closed-around claws must not overlap any collision piece."""
+        import math
+        import struct
+
+        ball_centre = (0.0295 + 0.048, -0.0016)  # in the wrist link's frame, 48 mm out from the finger pivots
+        pivots = {1: (0.0295, 0.0075, 1), 2: (0.0295, -0.0108, -1)}
+        angle = 0.36
+        clearance = float("inf")
+        for finger, (px, py, sign) in pivots.items():
+            cosine, sine = math.cos(sign * angle), math.sin(sign * angle)
+            for piece in sim_urdf.finger_collision_files(finger):
+                data = piece.read_bytes()
+                for i in range(struct.unpack("<I", data[80:84])[0]):
+                    for k in range(3):
+                        x, y, _ = struct.unpack("<3f", data[84 + i * 50 + 12 + k * 12 : 84 + i * 50 + 24 + k * 12])
+                        wx, wy = px + cosine * x - sine * y, py + sine * x + cosine * y
+                        clearance = min(clearance, math.hypot(wx - ball_centre[0], wy - ball_centre[1]))
+        # With solid convex-hull fingers a 21 mm ball could not be here at all.
+        self.assertGreater(clearance, 0.018)
+
     def test_rejects_unknown_joint_layout(self):
         with self.assertRaises(ValueError):
             sim_urdf.build('<robot name="r"><link name="a"/></robot>')
+        with self.assertRaises(ValueError):
+            # The joints are present but the finger links are not.
+            text = DEFAULT_URDF.read_text().replace('<link name="link6">', '<link name="other6">')
+            sim_urdf.build(text)
 
 
 if __name__ == "__main__":

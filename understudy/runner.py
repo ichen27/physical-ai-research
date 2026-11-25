@@ -44,7 +44,7 @@ class PlacedBall:
 
     Once the gripper has been commanded closed for a moment and its fingers have
     stopped short of closing, something is between them, and the ball is taken to
-    be at the gripper tip. This cannot see the ball roll away.
+    be cupped between them. This cannot see the ball roll away.
     """
 
     HELD_FINGER_RAD = 0.15
@@ -58,7 +58,7 @@ class PlacedBall:
     def position(self, joint_angles, finger_angle, gripper_open):
         self._closed_steps = 0 if gripper_open else self._closed_steps + 1
         if self._closed_steps >= self.SETTLE_STEPS and finger_angle > self.HELD_FINGER_RAD:
-            return self._chain.tip_position(list(joint_angles))
+            return self._chain.point_in_tip_frame(list(joint_angles), pickup.GRASP_POINT_FROM_TIP)
         return self._placed
 
 

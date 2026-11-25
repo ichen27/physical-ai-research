@@ -123,6 +123,11 @@ def main() -> None:
         help="camera: a simulated camera tracks the ball. placed: no camera; the ball is assumed to be where it "
         "was put until the gripper holds it (understudy.runner.PlacedBall).",
     )
+    parser.add_argument(
+        "--hull_fingers",
+        action="store_true",
+        help="Collide the fingers as convex hulls, as the vendor model does, instead of as curved claws.",
+    )
     parser.add_argument("--gripper_force_scale", type=float, default=1.0, help="Multiple of the vendor gripper force.")
     parser.add_argument("--output", help="Write the results to this JSON file.")
     parser.add_argument("--video", help="Record the first attempts to this MP4 file (needs ffmpeg).")
@@ -130,7 +135,7 @@ def main() -> None:
     args = parser.parse_args()
     policy = runtime.OnnxPolicy(args.policy)
     sim = MujocoArm(
-        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale),
+        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale, claw_fingers=not args.hull_fingers),
         command_delay_s=args.command_delay,
         profile_time_s=args.profile_time,
         extra_delay_steps=args.extra_delay_steps,
@@ -156,6 +161,7 @@ def main() -> None:
         "ball_mass_kg": args.ball_mass,
         "ball_friction": args.ball_friction,
         "gripper_force_scale": args.gripper_force_scale,
+        "finger_collision": "convex hull" if args.hull_fingers else "claw pieces",
         "camera_bias_m": args.camera_bias,
         "camera_noise_m": args.camera_noise,
         "camera_latency_steps": list(args.camera_latency),
