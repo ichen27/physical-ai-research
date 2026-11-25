@@ -18,7 +18,7 @@ Needs ``numpy`` and ``opencv-python-headless``.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 import cv2
 import numpy as np
@@ -43,6 +43,13 @@ class BallColour:
     saturation_min: float = 0.30  # 0 to 1
     value_min: float = 0.22  # 0 to 1
     veil_max: float = 90.0  # most grey that may be taken off, 0 to 255
+
+
+def colour_from(data: dict | None) -> BallColour:
+    """A saved colour test, or the default if there is none."""
+    if not data:
+        return BallColour()
+    return BallColour(**{key: float(data[key]) for key in asdict(BallColour()) if key in data})
 
 
 @dataclass(frozen=True)

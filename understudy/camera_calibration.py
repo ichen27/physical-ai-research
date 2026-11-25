@@ -75,14 +75,23 @@ def load_sightings(path: str | Path) -> list[Sighting]:
     path = Path(path)
     if not path.exists():
         return []
+    rows = json.loads(path.read_text())["sightings"]
     return [
         Sighting(tuple(int(t) for t in row["ticks"]), float(row["u"]), float(row["v"]), float(row["radius_px"]), int(row["place"]))
-        for row in json.loads(path.read_text())
+        for row in rows
     ]
 
 
-def save_sightings(path: str | Path, sightings: Sequence[Sighting]) -> None:
-    Path(path).write_text(json.dumps([asdict(s) for s in sightings], indent=2) + "\n")
+def load_notes(path: str | Path) -> dict:
+    """Whatever was saved beside the sightings, such as the ball's colour."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    return {key: value for key, value in json.loads(path.read_text()).items() if key != "sightings"}
+
+
+def save_sightings(path: str | Path, sightings: Sequence[Sighting], **notes) -> None:
+    Path(path).write_text(json.dumps({**notes, "sightings": [asdict(s) for s in sightings]}, indent=2) + "\n")
 
 
 def _least_squares(residual: Callable[[np.ndarray], np.ndarray], start: np.ndarray, steps: np.ndarray,

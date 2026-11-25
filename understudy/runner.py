@@ -39,12 +39,11 @@ class BallSource(Protocol):
         """Where the ball is now, metres in the arm base frame."""
 
 
-class PlacedBall:
-    """Stand-in for a camera: the ball is where it was placed until the gripper holds it.
+class _Grip:
+    """Tells when the gripper is holding something, from its fingers alone.
 
     Once the gripper has been commanded closed for a moment and its fingers have
-    stopped short of closing, something is between them, and the ball is taken to
-    be cupped between them. This cannot see the ball roll away.
+    stopped short of closing, something is between them.
     """
 
     # Fingers closed on nothing read about 0.00 rad. On the simulated rigid ball they stop
@@ -52,16 +51,193 @@ class PlacedBall:
     HELD_FINGER_RAD = 0.07
     SETTLE_STEPS = 10
 
+    def __init__(self) -> None:
+        self._closed_steps = 0
+
+    def holding(self, finger_angle: float, gripper_open: bool) -> bool:
+        self._closed_steps = 0 if gripper_open else self._closed_steps + 1
+        return self._closed_steps >= self.SETTLE_STEPS and finger_angle > self.HELD_FINGER_RAD
+
+
+class PlacedBall:
+    """Stand-in for a camera: the ball is where it was placed until the gripper holds it.
+
+    Once the gripper is holding something (see ``_Grip``), the ball is taken to
+    be cupped between the fingers. This cannot see the ball roll away.
+    """
+
+    HELD_FINGER_RAD = _Grip.HELD_FINGER_RAD
+    SETTLE_STEPS = _Grip.SETTLE_STEPS
+
     def __init__(self, x: float, y: float, chain: Chain | None = None):
         self._placed = (float(x), float(y), pickup.BALL_RADIUS_M)
         self._chain = chain or Chain()
-        self._closed_steps = 0
+        self._grip = _Grip()
 
     def position(self, joint_angles, finger_angle, gripper_open):
-        self._closed_steps = 0 if gripper_open else self._closed_steps + 1
-        if self._closed_steps >= self.SETTLE_STEPS and finger_angle > self.HELD_FINGER_RAD:
+        if self._grip.holding(finger_angle, gripper_open):
             return self._chain.point_in_tip_frame(list(joint_angles), pickup.GRASP_POINT_FROM_TIP)
         return self._placed
+
+
+# A ball the arm could pick up lies in this band around the swivel axis, metres. Orange things
+# nearer or further are something else.
+BALL_DISTANCE_M = (0.09, 0.36)
+# A patch is the ball only if it is about as big in the picture as a ball there must be.
+BALL_SIZE_RATIO = (0.72, 1.35)
+SWIVEL_AXIS_X_M = -0.01125  # the vendor URDF's joint1 origin
+
+
+def pick_ball(camera, blobs, joint_angles: Sequence[float], chain: Chain,
+              near: Sequence[float] | None = None) -> tuple[float, float, float] | None:
+    """Where the ball is on the desk, from the patches of its colour found in one picture.
+
+    ``camera`` is an ``understudy.camera_model.WristCamera`` and ``blobs`` come from
+    ``understudy.vision.find_blobs``. A patch counts only if it is whole (round and not
+    cut off by the edge of the picture), lies on the desk within the arm's reach, and is
+    the size a ball there would appear. Of several, the one nearest ``near`` is taken,
+    or the largest. None if no patch qualifies.
+    """
+    found = []
+    for blob in blobs:
+        if not blob.whole():
+            continue
+        point = camera.locate(blob.u, blob.v, joint_angles, chain)
+        if point is None:
+            continue
+        distance = math.hypot(point[0] - SWIVEL_AXIS_X_M, point[1])
+        if not BALL_DISTANCE_M[0] <= distance <= BALL_DISTANCE_M[1]:
+            continue
+        expected = camera.sight(point, joint_angles, chain)
+        if expected is None or not BALL_SIZE_RATIO[0] <= blob.radius_px / expected.radius_px <= BALL_SIZE_RATIO[1]:
+            continue
+        found.append((point, blob.area_px))
+    if not found:
+        return None
+    if near is not None:
+        return min(found, key=lambda item: math.dist(item[0][:2], near[:2]))[0]
+    return max(found, key=lambda item: item[1])[0]
+
+
+class CameraBall:
+    """The ball's position from the camera on the wrist.
+
+    ``look`` returns the patches of the ball's colour in the newest picture
+    (``understudy.vision.find_blobs``), or None when there is no new picture yet.
+
+    While the gripper is open, each picture in which the ball is seen whole and
+    where a ball can be moves the reported position. When it is not seen (out
+    of the picture, cut off by its edge, or partly hidden by the fingers during
+    the last of the approach) the last position seen is kept: a ball on a desk
+    stays put unless something pushes it. Once the gripper is commanded closed
+    the camera is ignored, because a ball in the gripper is no longer on the
+    desk and that is what turns a pixel into a position; from then on the
+    fingers say whether it is held, as they do for ``PlacedBall``.
+
+    A picture is a little old when it arrives, and the wrist has moved since.
+    ``latency_steps`` control steps back is the pose the picture is matched to.
+    """
+
+    def __init__(self, camera, look: Callable[[], Sequence | None], first: Sequence[float] | None = None,
+                 chain: Chain | None = None, latency_steps: int = 2):
+        if latency_steps < 0:
+            raise ValueError("latency_steps cannot be negative")
+        self._camera, self._look = camera, look
+        self._chain = chain or Chain()
+        self._grip = _Grip()
+        self._last = None if first is None else (float(first[0]), float(first[1]), pickup.BALL_RADIUS_M)
+        self._poses: list[tuple[float, ...]] = []
+        self._latency = latency_steps
+        self.steps_seen = 0  # control steps on which a picture moved the position
+        self.steps_kept = 0  # steps on which the last position was kept
+        self.steps_held = 0  # steps on which the gripper held the ball
+        self.state = "kept"  # what the latest step was: "seen", "kept" or "held"
+
+    def position(self, joint_angles, finger_angle, gripper_open):
+        self._poses = [tuple(joint_angles), *self._poses[: self._latency]]
+        if self._grip.holding(finger_angle, gripper_open):
+            self.steps_held += 1
+            self.state = "held"
+            return self._chain.point_in_tip_frame(list(joint_angles), pickup.GRASP_POINT_FROM_TIP)
+        seen = None
+        if gripper_open:
+            blobs = self._look()
+            if blobs:
+                seen = pick_ball(self._camera, blobs, self._poses[-1], self._chain, self._last)
+        if seen is not None:
+            self._last = seen
+            self.steps_seen += 1
+            self.state = "seen"
+        else:
+            self.steps_kept += 1
+            self.state = "kept"
+        if self._last is None:
+            raise RuntimeError("the camera has not seen the ball; stopping")
+        return self._last
+
+
+# Facing the ball. The policy was trained on balls in a patch 6 cm either side of straight
+# ahead, and with the speed limits it lifts reliably only from the middle of that patch to its
+# left. The arm is the same whichever way its swivel points, so a ball anywhere around it can
+# be brought to the patch's best spot by treating a turned swivel as straight ahead.
+AIM_LEFT_M = 0.03  # where the ball is put, left of straight ahead, in the turned frame
+MAX_TURN_RAD = 1.0  # the furthest the swivel's "straight ahead" is moved
+# Distances from the swivel axis the policy lifts from once the arm faces the ball (MuJoCo, with speed limits).
+REACH_BAND_M = (0.185, 0.245)
+
+
+def turn_to_face(ball_xy: Sequence[float]) -> float:
+    """How far to turn "straight ahead" about the swivel axis (rad, positive to the left) so
+    that a ball at ``ball_xy`` ends up ``AIM_LEFT_M`` to the left of it."""
+    x, y = ball_xy[0] - SWIVEL_AXIS_X_M, ball_xy[1]
+    distance = math.hypot(x, y)
+    if distance < 2.0 * AIM_LEFT_M:
+        raise ValueError("the ball is on top of the swivel axis")
+    turn = math.atan2(y, x) - math.asin(AIM_LEFT_M / distance)
+    if abs(turn) > MAX_TURN_RAD:
+        raise ValueError(
+            f"facing the ball means turning {math.degrees(turn):+.0f} degrees; "
+            f"the arm turns at most {math.degrees(MAX_TURN_RAD):.0f} either way"
+        )
+    return turn
+
+
+def turned(calibration: arm.Calibration, turn: float) -> arm.Calibration:
+    """The calibration of the same arm with "straight ahead" turned by ``turn`` rad about the swivel axis.
+
+    Everything computed from it (joint angles, the gripper's position, the camera's
+    answers) is then in the turned frame, and commands computed in that frame reach the
+    servos as the right ticks. Nothing else has to know.
+    """
+    zeros = list(calibration.zero_ticks)
+    zeros[0] += calibration.signs[0] * turn / arm.RAD_PER_TICK
+    return replace(calibration, zero_ticks=tuple(zeros))
+
+
+def in_turned_frame(point: Sequence[float], turn: float) -> tuple[float, ...]:
+    """A base-frame point as the frame turned by ``turn`` about the swivel axis sees it."""
+    x, y = point[0] - SWIVEL_AXIS_X_M, point[1]
+    c, s = math.cos(turn), math.sin(turn)
+    return (SWIVEL_AXIS_X_M + c * x + s * y, -s * x + c * y, *point[2:])
+
+
+class SwivelLimit:
+    """An arm whose swivel goals are kept inside the joint's true limits.
+
+    In a turned frame the runner's own limit on the swivel is turned too. This
+    holds the servo to the limits of the frame the arm was calibrated in.
+    """
+
+    def __init__(self, io: ArmIO, calibration: arm.Calibration):
+        joint = arm.ARM_JOINTS[0]
+        ends = [arm.rad_to_ticks(angle, calibration.zero_ticks[0], calibration.signs[0]) for angle in (joint.lower, joint.upper)]
+        self._io, self._low, self._high = io, min(ends), max(ends)
+
+    def read(self) -> ArmReading:
+        return self._io.read()
+
+    def write_goals(self, ticks: Sequence[int]) -> None:
+        self._io.write_goals([min(max(int(ticks[0]), self._low), self._high), *ticks[1:]])
 
 
 @dataclass(frozen=True)

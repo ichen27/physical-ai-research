@@ -12,7 +12,18 @@ a hand on the arm's power switch, and go through the steps in order:
     python scripts/real_arm.py run --policy <policy.onnx> --ball 0.21 0.0 --dry-run
     python scripts/real_arm.py run --policy <policy.onnx> --ball 0.21 0.0
 
-Needs: pip install dynamixel_sdk onnxruntime numpy
+With the camera on the wrist, the ball's position need not be typed in. Once, to calibrate the camera:
+
+    python scripts/real_arm.py camera-collect              # powered, slow: looks at the ball from many poses
+    python scripts/real_arm.py camera-fit                  # works out and saves the camera
+    python scripts/real_arm.py look                        # reads only; one picture, says where the ball is
+
+and then:
+
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look   # one look, then pick it up
+    python scripts/real_arm.py run --policy <policy.onnx> --camera live   # follow the ball; start from Terminal
+
+Needs: pip install dynamixel_sdk onnxruntime numpy opencv-python-headless
 """
 
 from __future__ import annotations
@@ -29,10 +40,22 @@ sys.path.insert(0, str(REPO))
 
 from understudy import arm, pickup, runtime  # noqa: E402
 from understudy.kinematics import Chain  # noqa: E402
-from understudy.runner import PlacedBall, goals_from_command, run_pickup, sensed_from_reading  # noqa: E402
+from understudy.runner import (  # noqa: E402
+    REACH_BAND_M,
+    CameraBall,
+    PlacedBall,
+    SwivelLimit,
+    goals_from_command,
+    run_pickup,
+    sensed_from_reading,
+)
 
 DEFAULT_CALIBRATION = REPO / "calibration.local.json"
 DEFAULT_TOUCHES = REPO / "touches.local.json"
+DEFAULT_CAMERA = REPO / "camera.local.json"
+DEFAULT_SIGHTINGS = REPO / "sightings.local.json"
+# A camera whose answers for a ball that did not move are spread wider than this is not saved.
+MAX_CAMERA_ERROR_MM = 8.0
 BASE_NOTE = (
     "Positions are metres in the arm model's frame, on the desk: x forward, y to the arm's left, z up. "
     "Its origin is 1.1 cm in front of the swivel axis. The 'where' step reads a position off the arm itself."
@@ -271,20 +294,218 @@ def cmd_start_pose(args) -> None:
     print("torque off, settings restored" if not problems else "PROBLEMS:\n  " + "\n  ".join(problems))
 
 
+def load_camera(args):
+    """The calibrated wrist camera and the ball's colour as it sees it."""
+    from understudy import vision
+    from understudy.camera_model import WristCamera
+
+    path = Path(args.camera_file)
+    if not path.exists():
+        raise SystemExit(f"{path} does not exist. Calibrate the camera first: camera-collect, then camera-fit.")
+    return WristCamera.load(path), vision.colour_from(json.loads(path.read_text()).get("colour"))
+
+
+def watcher(args, robot=None, prefix="look"):
+    from understudy.camera_feed import WatcherCamera
+
+    return WatcherCamera(args.watch_folder, keep_alive=robot.read if robot is not None else None, prefix=prefix)
+
+
+def hold_still(robot, seconds: float) -> None:
+    """Stay put, powered, for a while. Reading keeps the servos' watchdog fed."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        robot.read()
+        time.sleep(0.05)
+
+
+def cmd_look(args) -> None:
+    from understudy import vision
+    from understudy.camera_feed import CameraError
+    from understudy.runner import pick_ball
+
+    camera = colour = None
+    if Path(args.camera_file).exists():
+        camera, colour = load_camera(args)
+    colour = colour or vision.BallColour()
+    try:
+        picture = watcher(args).picture()
+    except CameraError as error:
+        raise SystemExit(str(error)) from None
+    blobs = vision.find_blobs(picture, colour)
+    print(f"{len(blobs)} patch(es) of the ball's colour in the picture")
+    for blob in blobs:
+        print(f"  at pixel ({blob.u:.0f}, {blob.v:.0f}), radius {blob.radius_px:.0f}, roundness {blob.roundness:.2f}"
+              + (", cut off by the edge" if blob.cut_off else ""))
+    chosen, note = None, "camera not calibrated"
+    if camera is None:
+        chosen = next((blob for blob in blobs if blob.whole()), None)
+        print("The camera is not calibrated yet (camera-collect, camera-fit), so there is no position to give.")
+    else:
+        calibration = arm.Calibration.load(args.calibration)
+        robot = open_arm(args)
+        try:
+            angles, _ = sensed_from_reading(robot.read(), calibration)
+        finally:
+            robot._port.closePort()
+        chain = Chain()
+        point = pick_ball(camera, blobs, angles[:5], chain)
+        if point is None:
+            note = "no ball seen whole on the desk within reach"
+            print("No ball: no patch is whole, on the desk within the arm's reach, and the size a ball there would be.")
+        else:
+            chosen = min(blobs, key=lambda blob: math.dist(camera.locate(blob.u, blob.v, angles[:5], chain) or (9, 9, 9), point))
+            note = f"ball at x={point[0]:.3f} y={point[1]:.3f}"
+            print(f"ball at x={point[0]:.3f} y={point[1]:.3f} (metres, arm model's frame)")
+    if args.save:
+        import cv2
+
+        cv2.imwrite(args.save, vision.draw(picture, blobs, chosen, note))
+        print(f"picture saved to {args.save}")
+
+
+def cmd_camera_collect(args) -> None:
+    from understudy import camera_calibration, camera_collect, vision
+    from understudy.camera_feed import CameraError
+
+    calibration = arm.Calibration.load(args.calibration)
+    robot = open_arm(args)
+    problems = []
+    sightings, colour, rough = [], None, None
+    try:
+        print(
+            "This raises the arm to the start pose and holds it there. Each time it is holding still there, put the\n"
+            "ball on the desk in front of the gripper (the first time) or move it to another spot (after that).\n"
+            "The arm sees the ball arrive and then looks at it from about twenty poses, all with the gripper\n"
+            f"raised, no joint turning faster than {math.degrees(camera_collect.MAX_JOINT_SPEED):.0f} degrees a second. "
+            "Keep hands clear while it moves."
+        )
+        if input("Arm clear of people and objects, hand on the power switch? Type yes: ").strip().lower() != "yes":
+            raise SystemExit("stopped; nothing was changed.")
+        rest = robot.read().positions
+        camera = watcher(args, robot, "cal")
+        robot.configure()
+        try:
+            robot.move_slowly(goals_from_command(runtime.start_command(), calibration), args.move_seconds)
+            before = camera.picture()
+            height, width = before.shape[:2]
+            collector = None
+            for place in range(args.places):
+                print(
+                    ("PUT THE BALL on the desk in front of the gripper now." if place == 0
+                     else "MOVE THE BALL to a different spot in front of the gripper now.")
+                    + f" Waiting up to about {args.wait_pictures * 2} s.", flush=True)
+                try:
+                    arrival = camera_collect.wait_for_ball(camera.picture, before, args.wait_pictures)
+                except camera_collect.NoBall as error:
+                    print(f"{error}" if place == 0 else "The ball was not moved; going on with what there is.")
+                    break
+                print(f"ball seen at pixel ({arrival.blob.u:.0f}, {arrival.blob.v:.0f}); starting in 3 s", flush=True)
+                if colour is None:
+                    colour = arrival.colour
+                    collector = camera_collect.Collector(robot, calibration, camera.picture, colour)
+                hold_still(robot, 3.0)
+                try:
+                    seen = collector.collect_place(place, width, height, known=rough)
+                except camera_collect.NoBall as error:
+                    print(str(error))
+                    break
+                sightings += seen
+                print(f"place {place + 1}: the ball was seen from {len(seen)} poses", flush=True)
+                if len(sightings) >= camera_calibration.MIN_SIGHTINGS:
+                    rough = camera_calibration.fit(sightings, calibration, width, height, lens=False).camera
+                before = camera.picture()
+        except CameraError as error:
+            print(str(error))
+        finally:
+            if sightings:
+                camera_calibration.save_sightings(
+                    args.sightings, sightings, colour=vars(colour), width=width, height=height,
+                    taken=time.strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                print(f"{len(sightings)} sightings saved to {args.sightings}. Next: camera-fit")
+            # Whatever happened, lower the arm to where it started instead of letting it drop.
+            try:
+                robot.move_slowly(rest, args.move_seconds)
+            except Exception as error:
+                print(f"could not lower the arm to rest: {error}")
+    finally:
+        problems = robot.shutdown()
+    print("torque off, settings restored" if not problems else "PROBLEMS:\n  " + "\n  ".join(problems))
+
+
+def cmd_camera_fit(args) -> None:
+    from understudy import camera_calibration, camera_collect
+
+    calibration = arm.Calibration.load(args.calibration)
+    sightings = camera_calibration.load_sightings(args.sightings)
+    notes = camera_calibration.load_notes(args.sightings)
+    if not sightings:
+        raise SystemExit(f"no sightings in {args.sightings}; run camera-collect first")
+    try:
+        fit = camera_calibration.fit(sightings, calibration, int(notes.get("width", 1280)), int(notes.get("height", 720)))
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    camera = fit.camera
+    for place, (x, y) in enumerate(fit.places):
+        errors = [e for s, e in zip(sightings, fit.desk_errors_m) if s.place == sorted({s.place for s in sightings})[place]]
+        print(f"  place {place + 1}: ball at x={x:.3f} y={y:.3f}, seen from {len(errors)} poses; they disagree by "
+              f"{1000 * (sum(e * e for e in errors) / len(errors)) ** 0.5:.1f} mm typically, {1000 * max(errors):.1f} mm at worst")
+    print(f"focal length {camera.focal_px:.0f} pixels (field of view {2 * math.degrees(math.atan(camera.width / 2 / camera.focal_px)):.0f} "
+          f"degrees across); picture centre {camera.centre_px[0]:.0f}, {camera.centre_px[1]:.0f}; distortion {camera.distortion:+.3f}"
+          + ("" if fit.fitted_lens else " (centre and distortion left at their defaults)"))
+    print(f"camera sits {-camera.mount_xyz[0] * 100:.1f} cm behind the gripper tip, {camera.mount_xyz[1] * 100:+.1f} cm to its left, "
+          f"{camera.mount_xyz[2] * 100:+.1f} cm above")
+    print(f"typical error: {fit.pixel_rms:.1f} pixels in the picture, {fit.desk_rms_m * 1000:.1f} mm on the desk")
+    moved = camera_collect.moved_places(fit, sightings)
+    if moved:
+        print(f"WARNING: at place(s) {[m + 1 for m in moved]} the ball was probably nudged while the arm was looking.")
+    if fit.ambiguous():
+        print(f"WARNING: a different camera fits nearly as well ({fit.runner_up_pixel_rms:.1f} pixels). "
+              "Collect again with the ball in two places.")
+    if fit.desk_rms_m * 1000 > args.max_error_mm or fit.ambiguous():
+        raise SystemExit(f"not saved: the typical error must be under {args.max_error_mm:g} mm and the answer unambiguous.")
+    camera.save(args.camera_file, colour=notes.get("colour"), desk_rms_mm=round(fit.desk_rms_m * 1000, 2),
+                pixel_rms=round(fit.pixel_rms, 2), sightings=len(sightings), places=len(fit.places),
+                fitted=time.strftime("%Y-%m-%d %H:%M:%S"))
+    print(f"saved {args.camera_file}")
+
+
 def cmd_run(args) -> None:
+    if (args.ball is None) == (args.camera is None):
+        raise SystemExit("give the ball's position with --ball X Y, or let the camera find it with --camera look|live")
+    if args.camera and args.dry_run:
+        raise SystemExit("a dry run leaves the arm limp, and the camera sees the desk only from the raised start pose; use --ball")
     calibration = arm.Calibration.load(args.calibration)
     policy = runtime.OnnxPolicy(args.policy)
-    ball = PlacedBall(*args.ball)
     print(BASE_NOTE)
-    print(f"Ball taken to be at x={args.ball[0]} y={args.ball[1]}. Hold target {args.target}.")
-    print("There is no camera yet: the ball is assumed to stay where it was put until the gripper holds it.")
+    wrist = colour = live = None
+    if args.camera:
+        from understudy import seek, vision
+        from understudy.camera_feed import CameraError, LiveCamera
+
+        wrist, colour = load_camera(args)
+        if args.camera == "live":
+            # Before the arm is powered, so that a camera macOS will not open costs nothing.
+            try:
+                live = LiveCamera(ffmpeg=args.ffmpeg, full_width=wrist.width)
+                live.wait_for_first()
+            except CameraError as error:
+                raise SystemExit(str(error)) from None
+        print("The camera on the wrist will look for the ball"
+              + (" and follow it." if live else " once; after that the ball is assumed to stay where it was seen."))
+    else:
+        print(f"Ball taken to be at x={args.ball[0]} y={args.ball[1]}.")
+        print("No camera: the ball is assumed to stay where it was put until the gripper holds it.")
+    print(f"Hold target {args.target}.")
     robot = open_arm(args)
     problems = []
     try:
         if args.dry_run:
             print("Dry run: the arm stays limp. Showing what the policy would command from the present pose.")
             require_torque_off(robot)
-            steps = run_pickup(robot, policy, calibration, ball, args.target, 1.0, advance=robot.advance, send=False)
+            steps = run_pickup(robot, policy, calibration, PlacedBall(*args.ball), args.target, 1.0,
+                               advance=robot.advance, send=False)
             for step in steps[:: max(1, len(steps) // 6)]:
                 print("  arm targets (rad)", [round(t, 3) for t in step.command.arm_targets],
                       "gripper", "open" if step.command.gripper_open else "closed")
@@ -299,6 +520,8 @@ def cmd_run(args) -> None:
         rest = robot.read().positions
         log_path = Path(args.log or REPO / time.strftime("run-%Y%m%d-%H%M%S.local.json"))
         chain, log = Chain(), []
+        record_of_run = {"ball": None, "turn_rad": 0.0, "ball_source": args.camera or "placed"}
+        ball = None
 
         def record(step) -> None:
             log.append({
@@ -308,31 +531,65 @@ def cmd_run(args) -> None:
                 "tip": [round(v, 4) for v in chain.tip_position(step.joint_angles[:5])],
                 "ball": [round(v, 4) for v in step.ball_position],
                 "action": [round(a, 3) for a in step.action],
+                **({"ball_state": ball.state} if isinstance(ball, CameraBall) else {}),
             })
 
         robot.configure()
         try:
             start = goals_from_command(runtime.start_command(), calibration)
             robot.move_slowly(start, args.move_seconds)
+            frame, io = calibration, robot
+            if args.camera:
+                if live:
+                    def look_now():
+                        hold_still(robot, 0.4)  # let the picture catch up with the arm, which has just stopped
+                        return [blob.scaled(wrist.width / live.width) for blob in vision.find_blobs(live.newest(), colour)]
+                else:
+                    eye = watcher(args, robot, "run")
+
+                    def look_now():
+                        return vision.find_blobs(eye.picture(), colour)
+
+                try:
+                    facing = seek.face_ball(robot, calibration, wrist, look_now)
+                except (ValueError, CameraError) as error:
+                    raise SystemExit(f"stopped before the pickup: {error}") from None
+                if facing is None:
+                    raise SystemExit("stopped before the pickup: the camera did not see the ball anywhere it looked.")
+                print(f"ball seen {facing.distance_m * 100:.1f} cm from the swivel axis, "
+                      f"{math.degrees(facing.turn_rad):+.0f} degrees round; the arm has turned to face it.", flush=True)
+                if not facing.within_reach() and not args.any_distance:
+                    raise SystemExit(
+                        f"stopped before the pickup: the policy picks up between {REACH_BAND_M[0] * 100:g} and "
+                        f"{REACH_BAND_M[1] * 100:g} cm from the swivel axis. Move the ball, or pass --any_distance to try anyway."
+                    )
+                frame, io = facing.calibration, SwivelLimit(robot, calibration)
+                record_of_run.update(ball=list(facing.ball), turn_rad=facing.turn_rad)
+                if live:
+                    ball = CameraBall(wrist, lambda: live.look(colour), facing.ball, latency_steps=args.camera_latency_steps)
+                else:
+                    ball = PlacedBall(*facing.ball)
+            else:
+                ball = PlacedBall(*args.ball)
+                record_of_run["ball"] = list(args.ball)
             steps = run_pickup(
-                robot, policy, calibration, ball, args.target, args.seconds, advance=robot.advance,
+                io, policy, frame, ball, args.target, args.seconds, advance=robot.advance,
                 max_speed=args.max_speed, max_lead=args.max_lead, on_step=record,
             )
             last = steps[-1]
             print("finished. gripper", "open" if last.command.gripper_open else "closed",
                   f"finger angle {last.joint_angles[5]:.2f} rad (above {PlacedBall.HELD_FINGER_RAD} with the gripper closed means it is holding something)")
+            if isinstance(ball, CameraBall):
+                print(f"the camera placed the ball on {ball.steps_seen} steps and kept its last position on {ball.steps_kept}")
             # Nothing waits on the keyboard while the arm is powered: the servos'
             # watchdog stops them if the bus goes quiet for half a second.
             # So the hold keeps reading, and sends no new goal: the gripper keeps squeezing.
-            deadline = time.monotonic() + args.hold_seconds
-            while time.monotonic() < deadline:
-                robot.read()
-                time.sleep(0.05)
+            hold_still(robot, args.hold_seconds)
             release = list(robot.read().positions)
             release[5] = calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)
             robot.move_slowly(release, 1.0)
         finally:
-            log_path.write_text(json.dumps({"ball": list(args.ball), "target": list(args.target),
+            log_path.write_text(json.dumps({**record_of_run, "target": list(args.target),
                                             "max_speed": args.max_speed, "max_lead": args.max_lead,
                                             "control_hz": arm.CONTROL_HZ, "steps": log}) + "\n")
             print(f"{len(log)} steps recorded in {log_path}")
@@ -342,6 +599,8 @@ def cmd_run(args) -> None:
             except Exception as error:  # the servos may not be answering; shutdown below still runs
                 print(f"could not lower the arm to rest: {error}")
     finally:
+        if live is not None:
+            live.close()
         if not args.dry_run:
             problems = robot.shutdown()
             print("torque off, settings restored" if not problems else "PROBLEMS:\n  " + "\n  ".join(problems))
@@ -352,6 +611,10 @@ def main() -> None:
     parser.add_argument("--port", default="/dev/cu.usbmodem21401", help="Serial port of the arm's USB controller.")
     parser.add_argument("--calibration", default=str(DEFAULT_CALIBRATION))
     parser.add_argument("--touches", default=str(DEFAULT_TOUCHES))
+    parser.add_argument("--camera_file", default=str(DEFAULT_CAMERA), help="The calibrated wrist camera.")
+    parser.add_argument("--sightings", default=str(DEFAULT_SIGHTINGS))
+    parser.add_argument("--watch_folder", default=str(Path.home() / "understudy-camera"),
+                        help="Folder of the camera watcher script (scripts/camera_watch.sh).")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Show the servos' state. Reads only.").set_defaults(run=cmd_status)
     commands.add_parser(
@@ -379,9 +642,29 @@ def main() -> None:
     start.add_argument("--move_seconds", type=float, default=4.0)
     start.add_argument("--hold_seconds", type=float, default=0.0, help="Stay in the start pose this long before returning.")
     start.set_defaults(run=cmd_start_pose)
+    look = commands.add_parser("look", help="Take one picture with the wrist camera and say where the ball is. Reads only.")
+    look.add_argument("--save", help="Save the picture, with what was found drawn on it, to this file.")
+    look.set_defaults(run=cmd_look)
+    collect = commands.add_parser(
+        "camera-collect", help="Powered, slow: look at the ball from many poses, to calibrate the wrist camera.")
+    collect.add_argument("--places", type=int, default=2, help="How many spots the ball is looked at in.")
+    collect.add_argument("--wait_pictures", type=int, default=30, help="Pictures to wait for the ball to appear, about 2 s each.")
+    collect.add_argument("--move_seconds", type=float, default=4.0)
+    collect.set_defaults(run=cmd_camera_collect)
+    camera_fit = commands.add_parser("camera-fit", help="Work out the wrist camera from the collected sightings.")
+    camera_fit.add_argument("--max_error_mm", type=float, default=MAX_CAMERA_ERROR_MM)
+    camera_fit.set_defaults(run=cmd_camera_fit)
     run = commands.add_parser("run", help="Run the pickup policy.")
     run.add_argument("--policy", required=True)
-    run.add_argument("--ball", type=float, nargs=2, required=True, metavar=("X", "Y"))
+    run.add_argument("--ball", type=float, nargs=2, metavar=("X", "Y"), help="Where the ball is, if no camera is used.")
+    run.add_argument("--camera", choices=["look", "live"],
+                     help="Find the ball with the wrist camera and turn to face it. look: one picture through the "
+                     "watcher, then the ball is assumed to stay put. live: follow the ball during the pickup; the "
+                     "command must be started from Terminal on the Mac the camera is plugged into.")
+    run.add_argument("--camera_latency_steps", type=int, default=3,
+                     help="For --camera live: how many control steps old a picture is taken to be.")
+    run.add_argument("--ffmpeg", default=str(Path.home() / "understudy-camera" / "ffmpeg"), help="For --camera live.")
+    run.add_argument("--any_distance", action="store_true", help="Try the pickup even if the ball is outside the distances the policy handles.")
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))
     run.add_argument("--seconds", type=float, default=10.0, help="How long the policy runs.")
     run.add_argument("--max_speed", type=float, default=0.6, help="Cap on how fast each joint's target moves, rad/s.")

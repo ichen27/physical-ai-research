@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -27,22 +30,84 @@ sys.path.insert(0, str(REPO))
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 
-from understudy import arm, pickup, runtime, variation  # noqa: E402
-from understudy.mujoco_arm import MujocoArm, SimulatedCamera, build_model  # noqa: E402
-from understudy.runner import PlacedBall, run_pickup  # noqa: E402
+from understudy import arm, pickup, runtime, seek, variation  # noqa: E402
+from understudy.camera_model import rotation_from_vector, vector_from_rotation  # noqa: E402
+from understudy.mujoco_arm import (  # noqa: E402
+    MujocoArm,
+    ProjectedCamera,
+    RenderedCamera,
+    SimulatedCamera,
+    build_model,
+    sim_wrist_camera,
+)
+from understudy.runner import (  # noqa: E402
+    AIM_LEFT_M,
+    MAX_TURN_RAD,
+    REACH_BAND_M,
+    SWIVEL_AXIS_X_M,
+    CameraBall,
+    PlacedBall,
+    in_turned_frame,
+    pick_ball,
+    run_pickup,
+)
 
 FINAL_WINDOW_STEPS = int(0.5 * arm.CONTROL_HZ)  # control ticks, so half a second on the clock
+WRIST_SOURCES = ("wrist-camera", "wrist-look")
 speeds: list[float] = []  # each finished attempt's fastest arm joint speed, rad/s
 
 
-def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None) -> dict:
-    ball_xy = (rng.uniform(*pickup.BALL_SPAWN["x"]), rng.uniform(*pickup.BALL_SPAWN["y"]))
+def place_for(rng: random.Random, area: str, distance_m: Sequence[float]) -> tuple[float, float]:
+    """Where the ball starts: in the patch the policy was trained on, or anywhere around the arm it can turn to face."""
+    if area == "trained":
+        return (rng.uniform(*pickup.BALL_SPAWN["x"]), rng.uniform(*pickup.BALL_SPAWN["y"]))
+    distance, turn = rng.uniform(*distance_m), rng.uniform(-MAX_TURN_RAD, MAX_TURN_RAD)
+    bearing = turn + math.asin(AIM_LEFT_M / distance)
+    return (SWIVEL_AXIS_X_M + distance * math.cos(bearing), distance * math.sin(bearing))
+
+
+def believed_camera(true_camera, rng: random.Random, mount_error_m: float, angle_error_rad: float):
+    """The camera as a calibration would give it: the true one, a little out in position and direction."""
+    xyz = tuple(v + rng.uniform(-mount_error_m, mount_error_m) for v in true_camera.mount_xyz)
+    axis = np.array([rng.gauss(0, 1) for _ in range(3)])
+    wobble = rotation_from_vector(axis / np.linalg.norm(axis) * rng.uniform(0, angle_error_rad))
+    rotation = vector_from_rotation(wobble @ rotation_from_vector(true_camera.mount_rotation))
+    return replace(true_camera, mount_xyz=xyz, mount_rotation=tuple(float(v) for v in rotation))
+
+
+def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None, eye=None) -> dict:
+    ball_xy = place_for(rng, args.area, args.distance)
     target = [rng.uniform(*pickup.HOLD_TARGET[axis]) for axis in "xyz"]
     sim.reset(ball_xy)
-    if args.ball_source == "camera":
+    sim.after_step = None
+    calibration, turn, source = sim.calibration, 0.0, None
+    if args.ball_source in WRIST_SOURCES:
+        camera = believed_camera(eye.camera, rng, args.camera_mount_error_mm / 1000, math.radians(args.camera_angle_error_deg))
+        eye.reset()
+        if args.face:
+            try:
+                facing = seek.face_ball(sim, calibration, camera, eye.look_now, say=lambda _: None)
+            except ValueError:
+                facing = None
+            if facing is None:
+                return {"lifted": False, "held": False, "ever_lifted": False, "height": float(sim.ball()[2]),
+                        "distance": float("nan"), "stopped": False, "found": False}
+            calibration, turn, first = facing.calibration, facing.turn_rad, facing.ball
+        else:
+            first = pick_ball(camera, eye.look_now(), calibration.to_rad(sim.read().positions[:5]), eye.chain)
+            if first is None:
+                return {"lifted": False, "held": False, "ever_lifted": False, "height": float(sim.ball()[2]),
+                        "distance": float("nan"), "stopped": False, "found": False}
+        if args.ball_source == "wrist-look":
+            ball = PlacedBall(first[0], first[1])
+        else:
+            ball = source = CameraBall(camera, eye.look, first, latency_steps=args.camera_latency[1])
+    elif args.ball_source == "camera":
         ball = SimulatedCamera(sim, rng, args.camera_bias, args.camera_noise, args.camera_latency)
     else:
         ball = PlacedBall(*ball_xy)
+    # The hold target is given in the frame the policy works in; the simulator's is not turned.
+    world_target = np.array(in_turned_frame(target, -turn))
 
     heights, distances = [], []
     peak_speed = [0.0]
@@ -51,28 +116,34 @@ def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None)
         peak_speed[0] = max(peak_speed[0], float(np.max(np.abs([arm_sim.data.qvel[a] for a in arm_sim._qvel[:5]]))))
         position = arm_sim.ball()
         heights.append(float(position[2]))
-        distances.append(float(np.linalg.norm(position - np.array(target))))
+        distances.append(float(np.linalg.norm(position - world_target)))
         if recorder is not None:
             recorder.capture(arm_sim)
 
     sim.after_step = after_step
     stopped = False
     try:
-        run_pickup(sim, policy, sim.calibration, ball, target, args.seconds, advance=sim.advance,
+        run_pickup(sim, policy, calibration, ball, target, args.seconds, advance=sim.advance,
                    max_speed=args.max_speed, max_lead=args.max_lead)
         speeds.append(peak_speed[0])
     except RuntimeError:
         # The runner's safety check stopped the arm, as it would on hardware. The attempt counts as failed.
         stopped = True
+    sim.after_step = None
     ever_lifted = bool(heights) and max(heights) > pickup.LIFTED_HEIGHT_M
+    outcome = {"found": True}
+    if source is not None:
+        open_steps = max(1, source.steps_seen + source.steps_kept)
+        outcome["seen_share"] = source.steps_seen / open_steps
     if stopped or len(heights) < FINAL_WINDOW_STEPS:
-        return {"lifted": False, "held": False, "ever_lifted": ever_lifted, "height": float(sim.ball()[2]),
+        return {**outcome, "lifted": False, "held": False, "ever_lifted": ever_lifted, "height": float(sim.ball()[2]),
                 "distance": float("nan"), "stopped": True}
 
     height = float(np.mean(heights[-FINAL_WINDOW_STEPS:]))
     distance = float(np.mean(distances[-FINAL_WINDOW_STEPS:]))
     lifted = height > pickup.LIFTED_HEIGHT_M
     return {
+        **outcome,
         "lifted": lifted,
         "held": lifted and distance < pickup.HOLD_RADIUS_M,
         "height": height,
@@ -80,6 +151,45 @@ def run_attempt(sim: MujocoArm, policy, rng: random.Random, args, recorder=None)
         "ever_lifted": ever_lifted,
         "stopped": False,
     }
+
+
+class Eye:
+    """The simulated wrist camera as the pickup uses it: one look on request, or a stream with latency."""
+
+    def __init__(self, sim: MujocoArm, camera, geometric: bool, latency_steps: int, rng: random.Random):
+        from understudy import camera_collect, vision
+        from understudy.kinematics import Chain
+
+        self.camera, self.chain, self._sim = camera, Chain(), sim
+        self._geometric, self._latency, self._rng = geometric, latency_steps, rng
+        self.colour = None
+        if not geometric:
+            # Learn the ball's colour the way the real procedure does: a picture before and after it is put down.
+            view = RenderedCamera(sim, camera)
+            sim.reset((0.6, 0.5))
+            empty = view.picture()
+            sim.place_ball((0.21, 0.0))
+            self.colour = camera_collect.wait_for_ball(view.picture, empty, say=lambda _: None).colour
+            view.close()
+            del vision
+        self.reset()
+
+    def reset(self) -> None:
+        if self._geometric:
+            self._now = ProjectedCamera(self._sim, self.camera, self._rng, pixel_noise=1.0)
+            self._stream = ProjectedCamera(self._sim, self.camera, self._rng, pixel_noise=1.0, latency_steps=self._latency)
+        else:
+            if getattr(self, "_now", None) is not None:
+                self._now.close()
+                self._stream.close()
+            self._now = RenderedCamera(self._sim, self.camera, self.colour)
+            self._stream = RenderedCamera(self._sim, self.camera, self.colour, latency_steps=self._latency)
+
+    def look_now(self):
+        return self._now.look()
+
+    def look(self):
+        return self._stream.look()
 
 
 class Recorder:
@@ -123,11 +233,26 @@ def main() -> None:
     parser.add_argument("--extra_delay_steps", type=int, default=0, help="Whole control steps of extra command delay.")
     parser.add_argument(
         "--ball_source",
-        choices=["camera", "placed"],
+        choices=["camera", "placed", *WRIST_SOURCES],
         default="camera",
-        help="camera: a simulated camera tracks the ball. placed: no camera; the ball is assumed to be where it "
-        "was put until the gripper holds it (understudy.runner.PlacedBall).",
+        help="camera: the ball's true position with errors added, as in training. placed: no camera; the ball is "
+        "assumed to be where it was put until the gripper holds it (understudy.runner.PlacedBall). wrist-camera: "
+        "the wrist camera is rendered and the real detector follows the ball in it (understudy.runner.CameraBall). "
+        "wrist-look: one look with the wrist camera before the attempt, then as placed.",
     )
+    parser.add_argument("--geometric_camera", action="store_true",
+                        help="For the wrist sources: no rendering; the ball appears where geometry says, fingers ignored.")
+    parser.add_argument("--camera_mount_error_mm", type=float, default=0.0,
+                        help="Wrist camera's position taken to be out by up to this much on each axis, new each attempt.")
+    parser.add_argument("--camera_angle_error_deg", type=float, default=0.0,
+                        help="Wrist camera's direction taken to be out by up to this much, new each attempt.")
+    parser.add_argument("--area", choices=["trained", "around"], default="trained",
+                        help="trained: balls in the patch the policy was trained on. around: anywhere the arm can turn "
+                        f"to face, up to {math.degrees(MAX_TURN_RAD):.0f} degrees either way, at --distance from the swivel axis.")
+    parser.add_argument("--distance", type=float, nargs=2, default=list(REACH_BAND_M), metavar=("NEAR", "FAR"),
+                        help="For --area around: the ball's distance from the swivel axis, metres.")
+    parser.add_argument("--face", action="store_true",
+                        help="For the wrist sources: look for the ball, swivelling if need be, and turn to face it first.")
     parser.add_argument(
         "--hull_fingers",
         action="store_true",
@@ -142,8 +267,12 @@ def main() -> None:
     parser.add_argument("--video_attempts", type=int, default=3)
     args = parser.parse_args()
     policy = runtime.OnnxPolicy(args.policy)
+    wrist = sim_wrist_camera() if args.ball_source in WRIST_SOURCES else None
+    if args.area == "around" and not (wrist and args.face):
+        parser.error("--area around needs a wrist ball source and --face: the policy cannot reach round by itself")
     sim = MujocoArm(
-        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale, claw_fingers=not args.hull_fingers),
+        build_model(args.ball_mass, args.ball_friction, args.stiffness_scale, claw_fingers=not args.hull_fingers,
+                    wrist_camera=wrist),
         command_delay_s=args.command_delay,
         profile_time_s=args.profile_time,
         extra_delay_steps=args.extra_delay_steps,
@@ -151,12 +280,13 @@ def main() -> None:
     gripper = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_ACTUATOR, arm.GRIPPER_JOINT_NAMES[0])
     sim.model.actuator_forcerange[gripper] *= args.gripper_force_scale
     rng = random.Random(args.seed)
+    eye = Eye(sim, wrist, args.geometric_camera, args.camera_latency[1], random.Random(args.seed + 1)) if wrist else None
     recorder = Recorder(sim.model, Path(args.video)) if args.video else None
 
     outcomes = []
     for attempt in range(args.attempts):
         recording = recorder if recorder is not None and attempt < args.video_attempts else None
-        outcomes.append(run_attempt(sim, policy, rng, args, recording))
+        outcomes.append(run_attempt(sim, policy, rng, args, recording, eye))
     if recorder is not None:
         recorder.close()
 
@@ -177,6 +307,19 @@ def main() -> None:
         "servo_profile_time_s": args.profile_time,
         "extra_delay_steps": args.extra_delay_steps,
         "ball_source": args.ball_source,
+        "ball_area": args.area,
+        "ball_distance_from_swivel_axis_m": list(args.distance) if args.area == "around" else None,
+        "faced_the_ball": args.face,
+        "wrist_camera": None if wrist is None else {
+            "pictures": "geometry only, fingers ignored" if args.geometric_camera else "rendered, found by understudy.vision",
+            "mount_error_mm": args.camera_mount_error_mm,
+            "angle_error_deg": args.camera_angle_error_deg,
+            "ball_found_rate": sum(o["found"] for o in outcomes) / len(outcomes),
+            "median_share_of_open_gripper_steps_ball_seen": (
+                float(np.median([o["seen_share"] for o in outcomes if "seen_share" in o]))
+                if any("seen_share" in o for o in outcomes) else None
+            ),
+        },
         "seed": args.seed,
         "seconds": args.seconds,
         "max_speed_rad_s": args.max_speed,

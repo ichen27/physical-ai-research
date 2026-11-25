@@ -1,0 +1,110 @@
+"""Stand-ins for the real arm and its camera, for the tests.
+
+``JumpArm`` is an arm whose servos jump straight to their goals. ``painted``
+draws what a wrist camera would see of a ball on a plain desk, from geometry
+alone, so the detector, the calibration and the pickup can be exercised
+together on machines that cannot render.
+"""
+
+from __future__ import annotations
+
+import cv2
+import numpy as np
+
+from understudy import pickup, runtime
+from understudy.kinematics import Chain
+from understudy.runner import ArmReading, goals_from_command
+
+CHAIN = Chain()
+DESK = (118, 121, 119)  # blue, green, red
+BALL = (30, 118, 240)
+
+
+class JumpArm:
+    """Servos that jump straight to their goals. Remembers every slow move it was asked for."""
+
+    def __init__(self, calibration):
+        self.calibration = calibration
+        self.positions = goals_from_command(runtime.start_command(), calibration)
+        self.moves: list[tuple[list[int], float]] = []
+        self.written: list[list[int]] = []
+
+    def read(self) -> ArmReading:
+        return ArmReading(tuple(self.positions), (0,) * 6)
+
+    def write_goals(self, ticks) -> None:
+        self.written.append(list(ticks))
+        self.positions = list(ticks)
+
+    def move_slowly(self, ticks, seconds: float) -> None:
+        self.moves.append((list(ticks), seconds))
+        self.positions = list(ticks)
+
+    def advance(self) -> None:
+        pass
+
+    def angles(self) -> list[float]:
+        return self.calibration.to_rad(self.positions[:5])
+
+
+def painted(camera, angles, balls, extras=()) -> np.ndarray:
+    """The picture ``camera`` takes with the arm at ``angles``: each ball in ``balls`` (x, y) as a disc on a plain desk.
+
+    ``extras`` are (u, v, radius, colour) discs painted as they are, for things that are not the ball.
+    """
+    image = np.empty((camera.height, camera.width, 3), dtype=np.uint8)
+    image[:] = DESK
+    for ball in balls:
+        sight = camera.sight((ball[0], ball[1], pickup.BALL_RADIUS_M), angles, CHAIN)
+        if sight is None or abs(sight.u) > 4 * camera.width or abs(sight.v) > 4 * camera.width:
+            continue
+        cv2.circle(image, (int(round(sight.u * 16)), int(round(sight.v * 16))), int(round(sight.radius_px * 16)), BALL, -1,
+                   cv2.LINE_AA, shift=4)
+    for u, v, radius, colour in extras:
+        cv2.circle(image, (int(u), int(v)), int(radius), colour, -1, cv2.LINE_AA)
+    return image
+
+
+class SimRobot:
+    """The simulated MuJoCo arm dressed as ``understudy.dynamixel.DynamixelArm``, for testing the real-arm tool."""
+
+    class _Port:
+        def closePort(self) -> None:
+            pass
+
+    def __init__(self, sim):
+        self.sim = sim
+        self._port = self._Port()
+        self.torque_on = False
+        self.log: list[str] = []
+
+    def status(self):
+        import types
+
+        return [types.SimpleNamespace(dxl_id=i, torque_on=self.torque_on) for i in (11, 12, 13, 14, 15, 16)]
+
+    def configure(self) -> None:
+        self.torque_on = True
+        self.log.append("configure")
+
+    def shutdown(self) -> list[str]:
+        self.torque_on = False
+        self.log.append("shutdown")
+        return []
+
+    def read(self):
+        return self.sim.read()
+
+    def write_goals(self, ticks) -> None:
+        if not self.torque_on:
+            raise AssertionError("goals written with torque off")
+        self.sim.write_goals(ticks)
+
+    def move_slowly(self, ticks, seconds: float) -> None:
+        if not self.torque_on:
+            raise AssertionError("moved with torque off")
+        self.log.append(f"move {seconds:.1f}")
+        self.sim.move_slowly(ticks, seconds)
+
+    def advance(self) -> None:
+        self.sim.advance()
