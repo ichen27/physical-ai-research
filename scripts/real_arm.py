@@ -413,7 +413,9 @@ def cmd_camera_collect(args) -> None:
                 sightings += seen
                 print(f"place {place + 1}: the ball was seen from {len(seen)} poses", flush=True)
                 if len(sightings) >= camera_calibration.MIN_SIGHTINGS:
-                    rough = camera_calibration.fit(sightings, calibration, width, height, lens=False).camera
+                    # The arm is powered and must keep hearing from the computer while this is worked out.
+                    rough = camera_calibration.fit(sightings, calibration, width, height, lens=False,
+                                                   tick=collector.pulse).camera
                 before = camera.picture()
         except CameraError as error:
             print(str(error))

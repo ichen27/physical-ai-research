@@ -28,8 +28,10 @@ class JumpArm:
         self.positions = goals_from_command(runtime.start_command(), calibration)
         self.moves: list[tuple[list[int], float]] = []
         self.written: list[list[int]] = []
+        self.reads = 0
 
     def read(self) -> ArmReading:
+        self.reads += 1
         return ArmReading(tuple(self.positions), (0,) * 6)
 
     def write_goals(self, ticks) -> None:
@@ -77,6 +79,22 @@ class SimRobot:
         self._port = self._Port()
         self.torque_on = False
         self.log: list[str] = []
+        # The real servos cut their own power if the computer is silent for 500 ms, and the
+        # raised arm drops. This remembers the longest silence while powered, on the real clock.
+        self.longest_silence_s = 0.0
+        self._heard = None
+
+    def _hearing(self) -> None:
+        """Call at the start of anything that talks to the servos."""
+        import time
+
+        if self.torque_on and self._heard is not None:
+            self.longest_silence_s = max(self.longest_silence_s, time.monotonic() - self._heard)
+
+    def _heard_now(self) -> None:
+        import time
+
+        self._heard = time.monotonic()
 
     def status(self):
         import types
@@ -86,25 +104,34 @@ class SimRobot:
     def configure(self) -> None:
         self.torque_on = True
         self.log.append("configure")
+        self._heard_now()
 
     def shutdown(self) -> list[str]:
+        self._hearing()
         self.torque_on = False
         self.log.append("shutdown")
         return []
 
     def read(self):
-        return self.sim.read()
+        self._hearing()
+        reading = self.sim.read()
+        self._heard_now()
+        return reading
 
     def write_goals(self, ticks) -> None:
         if not self.torque_on:
             raise AssertionError("goals written with torque off")
+        self._hearing()
         self.sim.write_goals(ticks)
+        self._heard_now()
 
     def move_slowly(self, ticks, seconds: float) -> None:
         if not self.torque_on:
             raise AssertionError("moved with torque off")
+        self._hearing()
         self.log.append(f"move {seconds:.1f}")
-        self.sim.move_slowly(ticks, seconds)
+        self.sim.move_slowly(ticks, seconds)  # the real driver reads throughout a slow move
+        self._heard_now()
 
     def advance(self) -> None:
-        self.sim.advance()
+        self.sim.advance()  # simulated time passing, not talk on the bus

@@ -21,6 +21,9 @@ from understudy import arm, pickup
 
 REPO = Path(__file__).resolve().parent.parent
 POLICY = REPO / "results" / "pickup" / "2026-11-24-claw" / "policy.onnx"
+# The real servos cut their power, and the raised arm drops, after 500 ms without hearing from the
+# computer. While powered, the tool must never be silent for half that.
+QUIET_LIMIT_S = 0.25
 ODD = arm.Calibration((3012.0, 2031.0, 3042.0, 3013.0, 2050.0), (1, -1, 1, -1, 1), 1740.0, -1)
 
 
@@ -52,10 +55,12 @@ class Bench:
         bench = self
 
         class Watcher:
-            def __init__(self, *args, **kwargs):
-                pass
+            def __init__(self, folder=None, keep_alive=None, **kwargs):
+                self.keep_alive = keep_alive
 
             def picture(self):
+                if self.keep_alive is not None:
+                    self.keep_alive()  # as the real one does, many times, while it waits for the picture
                 if bench.on_picture is not None:
                     bench.on_picture()
                 return bench.view.picture()
@@ -136,6 +141,7 @@ class ToolWithCameraTests(unittest.TestCase):
             with mock.patch("understudy.camera_collect.wait_for_ball", wait):
                 cls.collect_output = bench.run(cls.tool, cls.tool.cmd_camera_collect, places=2, wait_pictures=6)
         bench.on_picture = None
+        cls.collect_silence_s = bench.robot.longest_silence_s
         cls.fit_output = bench.run(cls.tool, cls.tool.cmd_camera_fit, max_error_mm=8.0)
 
     @classmethod
@@ -148,6 +154,7 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertIn("place 2: the ball was seen from", self.collect_output)
         self.assertIn("torque off, settings restored", self.collect_output)
         self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.collect_silence_s, QUIET_LIMIT_S)
         saved = json.loads((self.bench.folder / "sightings.json").read_text())
         self.assertGreaterEqual(len(saved["sightings"]), 30)
         self.assertIn("hue_low", saved["colour"])
@@ -181,6 +188,7 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertIn("the arm has turned to face it", out, out)
         self.assertIn("torque off, settings restored", out)
         self.assertGreater(self.bench.highest, pickup.LIFTED_HEIGHT_M, out)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
         self.assertLess(log["turn_rad"], -0.5)
         self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)  # in the turned frame the ball is 3 cm to the left
         self.assertFalse(self.bench.robot.torque_on)

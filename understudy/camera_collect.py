@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass
 from typing import Callable, Protocol, Sequence
 
@@ -103,12 +104,17 @@ def small_poses(chain: Chain) -> list[tuple[float, ...]]:
 
 
 def wide_poses(camera: WristCamera, ball_xy: Sequence[float], count: int, chain: Chain,
-               rng: random.Random | None = None) -> list[tuple[float, ...]]:
-    """Poses spread as widely as possible from which ``camera`` should see a ball at ``ball_xy`` whole."""
+               rng: random.Random | None = None, tick: Callable[[], object] | None = None) -> list[tuple[float, ...]]:
+    """Poses spread as widely as possible from which ``camera`` should see a ball at ``ball_xy`` whole.
+
+    ``tick`` is called on every pose tried, for a caller holding a powered arm (see ``Pulse``).
+    """
     rng = rng or random.Random(0)
     ball = (ball_xy[0], ball_xy[1], pickup.BALL_RADIUS_M)
     found: list[tuple[float, ...]] = []
     for _ in range(6000):
+        if tick is not None:
+            tick()
         pose = tuple(s + rng.uniform(-reach, reach) for s, reach in zip(pickup.START_POSE, WIDE_RANGE))
         if not pose_is_clear(pose, chain):
             continue
@@ -173,14 +179,50 @@ def wait_for_ball(take_picture: Callable[[], np.ndarray], empty: np.ndarray, att
     raise NoBall("no ball appeared in front of the gripper. Put it on the desk where the camera can see all of it.")
 
 
+class Pulse:
+    """Keeps a powered arm hearing from the computer during slow working-out.
+
+    The real servos switch themselves off, and a raised arm drops, if the
+    computer says nothing to them for half a second. Fitting a camera or
+    choosing views takes about that long. Those routines call this over and
+    over as they work, and every ``every_s`` it calls ``keep_alive`` (the
+    arm's ``read``), from the same thread that does all the other talking to
+    the servos.
+
+    Doing the work on a second thread instead was tried and measured: the
+    thread reading the arm was held up for 471 ms of a 470 ms fit.
+    """
+
+    def __init__(self, keep_alive: Callable[[], object] | None, every_s: float = 0.05):
+        self._keep_alive, self._every = keep_alive, every_s
+        self._last = time.monotonic()
+        self.beats = 0
+
+    def __call__(self) -> None:
+        if self._keep_alive is None:
+            return
+        now = time.monotonic()
+        if now - self._last >= self._every:
+            self._keep_alive()
+            self._last = time.monotonic()
+            self.beats += 1
+
+
 class Collector:
-    """Visits poses and records where the ball appears from each."""
+    """Visits poses and records where the ball appears from each.
+
+    ``take_picture`` must itself keep a powered arm alive while it waits (as
+    ``understudy.camera_feed.WatcherCamera`` does when given the arm's ``read``).
+    The slow working-out in between is given ``self.pulse``, which reads the arm
+    every 50 ms.
+    """
 
     def __init__(self, io: MovingArm, calibration: arm.Calibration, take_picture: Callable[[], np.ndarray],
                  colour: vision.BallColour, chain: Chain | None = None, say: Callable[[str], None] = print):
         self.io, self.calibration, self.take_picture, self.colour = io, calibration, take_picture, colour
         self.chain = chain or Chain()
         self.say = say
+        self.pulse = Pulse(io.read)
         self._pose = tuple(calibration.to_rad(io.read().positions[:5]))
 
     def go(self, pose: Sequence[float]) -> bool:
@@ -239,13 +281,16 @@ class Collector:
                     f"the ball was seen whole from only {len(seen)} of the small moves. Put it nearer the middle "
                     "of the picture: on the desk straight ahead of the gripper."
                 )
-            rough = camera_calibration.fit(seen, self.calibration, width, height, self.chain, lens=False).camera
+            rough = camera_calibration.fit(seen, self.calibration, width, height, self.chain, lens=False,
+                                           tick=self.pulse).camera
+        self.pulse()
         try:
             where, _, _ = camera_calibration.spread(rough, seen, self.calibration, self.chain)
         except ValueError:
             where = None
         if where is not None:
-            seen += self.visit(wide_poses(rough, where, wide_count, self.chain, rng), place, rough, (*where, 0.0))
+            views = wide_poses(rough, where, wide_count, self.chain, rng, tick=self.pulse)
+            seen += self.visit(views, place, rough, (*where, 0.0))
         self.go(pickup.START_POSE)
         return seen
 

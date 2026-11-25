@@ -167,12 +167,17 @@ def fit(
     chain: Chain | None = None,
     lens: bool | None = None,
     start: WristCamera | None = None,
+    tick: Callable[[], object] | None = None,
 ) -> Fit:
     """The camera that best explains the sightings.
 
     ``lens`` says whether to fit the picture's centre and the lens distortion as well as
     the focal length and the mount. Left as None it is decided by how much there is to
     go on. ``start`` is a camera to try first, such as the last fit.
+
+    A fit takes about half a second. ``tick`` is called thousands of times while it runs,
+    so that a caller holding a powered arm can keep talking to its servos (see
+    ``understudy.camera_collect.Pulse``).
     """
     sightings = list(sightings)
     if len(sightings) < MIN_SIGHTINGS:
@@ -199,6 +204,8 @@ def fit(
         return x[0] * width, (cx, cy), distortion, x[1:4], x[4:7], places
 
     def residual(x: np.ndarray) -> np.ndarray:
+        if tick is not None:
+            tick()
         focal, middle, distortion, xyz, rotation, places = unpack(x)
         if focal <= 0:
             return np.full(3 * count, 1e6)
@@ -239,6 +246,8 @@ def fit(
                                                          roll_quarter_turns=quarter_turns))
     found = []
     for guess in guesses:
+        if tick is not None:
+            tick()
         x0 = vector(guess, False)
         if x0 is None:
             continue

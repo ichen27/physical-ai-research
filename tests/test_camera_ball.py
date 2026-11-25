@@ -205,9 +205,13 @@ class SeekTests(unittest.TestCase):
         self.assertEqual(len(jump.moves), len(seek.SCAN) - 1)
 
     def test_says_when_the_ball_is_out_of_reach(self):
-        _, facing = self.seek((0.14, 0.0))
+        _, facing = self.seek((0.12, 0.0))
         self.assertFalse(facing.within_reach())
-        self.assertAlmostEqual(facing.distance_m, 0.151, delta=0.004)
+        self.assertAlmostEqual(facing.distance_m, 0.131, delta=0.004)
+        _, facing = self.seek((0.27, 0.0))
+        self.assertFalse(facing.within_reach())
+        _, facing = self.seek((0.16, 0.0))
+        self.assertTrue(facing.within_reach())
 
 
 if __name__ == "__main__":

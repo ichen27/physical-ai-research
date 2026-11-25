@@ -103,6 +103,61 @@ class ArrivalTests(unittest.TestCase):
         self.assertLess(math.hypot(arrival.blob.u - expected.u, arrival.blob.v - expected.v), 2.0)
 
 
+class PulseTests(unittest.TestCase):
+    """A powered arm drops if the computer is silent for half a second, so slow working-out reads the arm as it goes."""
+
+    def test_reads_the_arm_at_intervals_however_often_it_is_called(self):
+        import time
+
+        heard = []
+        pulse = camera_collect.Pulse(lambda: heard.append(time.monotonic()), every_s=0.02)
+        until = time.monotonic() + 0.3
+        calls = 0
+        while time.monotonic() < until:
+            pulse()
+            calls += 1
+        self.assertGreater(calls, 1000)
+        self.assertGreaterEqual(len(heard), 8)
+        self.assertLessEqual(len(heard), 16)
+        self.assertEqual(pulse.beats, len(heard))
+        self.assertLess(max(b - a for a, b in zip(heard, heard[1:])), 0.1)
+
+    def test_without_an_arm_it_does_nothing(self):
+        pulse = camera_collect.Pulse(None)
+        pulse()
+        self.assertEqual(pulse.beats, 0)
+
+    def test_a_fit_never_leaves_the_arm_unheard_for_long(self):
+        import time
+
+        desk = Desk((0.21, 0.01))
+        collector = camera_collect.Collector(desk.arm, ODD, desk.picture, vision.BallColour(), say=lambda _: None)
+        seen = collector.visit(camera_collect.small_poses(sim_rig.CHAIN), 0)
+        heard = [time.monotonic()]
+        pulse = camera_collect.Pulse(lambda: heard.append(time.monotonic()))
+        started = time.monotonic()
+        camera_calibration.fit(seen, ODD, TRUE.width, TRUE.height, lens=False, tick=pulse)
+        heard.append(time.monotonic())
+        took = heard[-1] - started
+        self.assertGreater(len(heard), 2 + took / 0.1)  # it did read the arm throughout, not just at the ends
+        self.assertLess(max(b - a for a, b in zip(heard, heard[1:])), 0.2)
+
+    def test_choosing_views_never_leaves_the_arm_unheard_for_long(self):
+        import time
+
+        heard = [time.monotonic()]
+        pulse = camera_collect.Pulse(lambda: heard.append(time.monotonic()), every_s=0.01)
+        camera_collect.wide_poses(TRUE, (0.21, 0.02), 12, sim_rig.CHAIN, random.Random(1), tick=pulse)
+        heard.append(time.monotonic())
+        self.assertLess(max(b - a for a, b in zip(heard, heard[1:])), 0.2)
+
+    def test_collecting_reads_the_arm_while_it_fits_and_chooses_views(self):
+        desk = Desk((0.21, 0.01))
+        collector = camera_collect.Collector(desk.arm, ODD, desk.picture, vision.BallColour(), say=lambda _: None)
+        collector.collect_place(0, TRUE.width, TRUE.height, rng=random.Random(0))
+        self.assertGreaterEqual(collector.pulse.beats, 3)
+
+
 class CollectionTests(unittest.TestCase):
     def collect(self, places, say=lambda _: None):
         desk = Desk()

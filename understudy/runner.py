@@ -182,8 +182,11 @@ class CameraBall:
 # be brought to the patch's best spot by treating a turned swivel as straight ahead.
 AIM_LEFT_M = 0.03  # where the ball is put, left of straight ahead, in the turned frame
 MAX_TURN_RAD = 1.0  # the furthest the swivel's "straight ahead" is moved
-# Distances from the swivel axis the policy lifts from once the arm faces the ball (MuJoCo, with speed limits).
-REACH_BAND_M = (0.185, 0.245)
+# Distances from the swivel axis the policy lifts from once the arm faces the ball. Measured in
+# MuJoCo with the speed limits on, 40 attempts per centimetre: 92.5% or better from 15 to 24 cm,
+# 52.5% at 14 to 15, 77.5% at 24 to 25, 40% at 25 to 26 and none beyond
+# (results/camera/2026-11-25-wrist-camera, the mujoco-distance files). Not measured on a real arm.
+REACH_BAND_M = (0.15, 0.24)
 
 
 def turn_to_face(ball_xy: Sequence[float]) -> float:

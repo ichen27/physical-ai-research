@@ -1,7 +1,7 @@
 {
   "simulator": "MuJoCo 3.3.7, vendor model",
   "policy": "results/pickup/2026-11-24-claw/policy.onnx",
-  "attempts_scored": 200,
+  "attempts_scored": 40,
   "servo_stiffness_scale": 1.0,
   "ball_mass_kg": 0.005,
   "ball_friction": 1.0,
@@ -19,8 +19,8 @@
   "ball_source": "wrist-camera",
   "ball_area": "around",
   "ball_distance_from_swivel_axis_m": [
-    0.185,
-    0.245
+    0.27,
+    0.28
   ],
   "faced_the_ball": true,
   "wrist_camera": {
@@ -28,20 +28,20 @@
     "mount_error_mm": 0.0,
     "angle_error_deg": 0.0,
     "ball_found_rate": 1.0,
-    "median_share_of_open_gripper_steps_ball_seen": 0.8767123287671232
+    "median_share_of_open_gripper_steps_ball_seen": 0.1725314368171511
   },
   "seed": 7,
   "seconds": 15.0,
   "max_speed_rad_s": 0.3,
   "max_lead_rad": 0.05,
   "peak_joint_speed_rad_s": {
-    "median": 0.4378757115312458,
-    "highest": 0.5628964512976702
+    "median": 0.4627193862517512,
+    "highest": 0.7652278818753244
   },
   "success_rate": 0.0,
-  "lifted_rate": 0.96,
-  "lifted_at_some_point_rate": 0.96,
+  "lifted_rate": 0.0,
+  "lifted_at_some_point_rate": 0.0,
   "safety_stop_rate": 0.0,
-  "median_final_ball_height_m": 0.15934735336007677,
-  "median_distance_to_target_when_lifted_m": 0.03758412337157455
+  "median_final_ball_height_m": 0.020982818157539836,
+  "median_distance_to_target_when_lifted_m": null
 }
