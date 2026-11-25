@@ -4,7 +4,7 @@ Repository: https://github.com/ichen27/understudy (public, MIT). Canonical check
 
 ## What this is
 
-Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is reaching a target point. Stage 2 is picking up a foam golf ball. Both work in the training simulator only. The pickup does not yet hold the ball in the MuJoCo cross-check, and nothing has run on the real arm.
+Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is reaching a target point. Stage 2 is picking up a foam golf ball. The pickup holds the ball in both the training simulator and the MuJoCo cross-check. Nothing has run on the real arm.
 
 ## Architecture
 
@@ -12,12 +12,14 @@ Sim-to-real reinforcement learning for the ROBOTIS OMX follower arm. Stage 1 is 
 - `understudy_isaac/` holds everything that imports Isaac Lab. Its `__init__.py` must not import Isaac Lab, because task registration happens before the simulator starts.
 - Task configuration files (`*_env_cfg.py`, `*_cfg.py`) are also loaded before the simulator starts. They may import Isaac Lab configuration classes but not modules that pull in the simulator, such as action or asset implementations. Name an implementation class by string in its configuration, as `servo_action_cfg.py` does. Getting this wrong crashes the simulator at startup with `free(): invalid pointer`.
 - `assets/open_manipulator_description/` is vendored from ROBOTIS under Apache-2.0. Do not edit those files. Record the upstream commit in `THIRD_PARTY_NOTICES.md` when updating them.
+- Collision shapes must have the real part's shape where it touches things. Physics engines collide with a mesh's convex hull; for the claw-shaped fingers that filled the hollow they grip with, and no amount of training fixed the resulting grip. `scripts/build_finger_collision.py` builds the fingers from convex pieces, used by both the Isaac Lab arm and the MuJoCo arm. Check any new gripper or object the same way before training on it.
 - Observations the policy receives in simulation must be obtainable on the real arm. Do not add simulator-only state to the policy observation.
 
 ## Where things run
 
 - Library and tests: anywhere with Python 3.11+.
 - Training: a Linux NVIDIA GPU host with Isaac Lab. The author uses a rented Brev instance. It bills by the hour, so stop it when a session ends and say so in the handoff. Agree a time budget with the author before starting it.
+- Copy checkpoints off the rented machine as training goes, not only at the end. On 2026-11-24 the account's credit ran out three minutes before a 100-minute run finished, the machine was stopped, and the final checkpoint was left on its disk.
 - Before training a contact task, run its `scripts/check_*_scene.py` script. A scripted grasp that fails means the scene is wrong, and training would be wasted.
 - After training a pickup policy, run it in MuJoCo with `scripts/mujoco_pickup.py` (no GPU). A result in the training simulator alone is not evidence that a policy will transfer; three separate problems were found only this way.
 - `understudy/runtime.py` and `understudy/runner.py` are the single path from sensor readings to servo commands, used by the MuJoCo cross-check and the real arm alike. Change the policy's inputs or outputs there and in the Isaac Lab task together, re-record `tests/fixtures/pickup_rollout.json` with `scripts/record_rollout.py`, and keep `interface.json` beside every exported policy.

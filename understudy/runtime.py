@@ -15,9 +15,9 @@ from typing import Sequence
 
 from . import arm, pickup
 
-OBSERVATION_SIZE = 28
 ACTION_SIZE = 6
 INTERFACE_FILE = "interface.json"
+_MODES = ("absolute", "relative", "incremental")
 
 
 @dataclass(frozen=True)
@@ -26,22 +26,34 @@ class Interface:
 
     ``absolute``: target = start pose + scale * output.
     ``relative``: target = the joint's present angle + scale * output.
+    ``incremental``: target = the previous target + scale * output, kept within
+    ``max_lead`` of the joint's present angle. Such a policy also takes, as five
+    extra inputs, how far each previous target is ahead of its joint.
+
     Saved as ``interface.json`` beside the exported policy.
     """
 
     arm_action: str = "absolute"
     arm_action_scale: float = 0.5
+    max_lead: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.arm_action not in ("absolute", "relative"):
+        if self.arm_action not in _MODES:
             raise ValueError(f"unknown arm action mode {self.arm_action!r}")
         if self.arm_action_scale <= 0:
             raise ValueError("arm action scale must be positive")
+        if self.arm_action == "incremental" and self.max_lead <= 0:
+            raise ValueError("an incremental interface needs a positive max_lead")
+
+    @property
+    def observation_size(self) -> int:
+        return 33 if self.arm_action == "incremental" else 28
 
     @classmethod
     def current(cls) -> "Interface":
         """The interface policies are trained with now."""
-        return cls(pickup.ARM_ACTION_MODE, pickup.ARM_ACTION_SCALE)
+        lead = pickup.ARM_TARGET_MAX_LEAD if pickup.ARM_ACTION_MODE == "incremental" else 0.0
+        return cls(pickup.ARM_ACTION_MODE, pickup.ARM_ACTION_SCALE, lead)
 
     @classmethod
     def beside(cls, policy_path: str | Path) -> "Interface":
@@ -50,11 +62,13 @@ class Interface:
         if not path.exists():
             return cls()
         data = json.loads(path.read_text())
-        return cls(str(data["arm_action"]), float(data["arm_action_scale"]))
+        return cls(str(data["arm_action"]), float(data["arm_action_scale"]), float(data.get("max_lead", 0.0)))
 
     def save(self, directory: str | Path) -> None:
-        text = json.dumps({"arm_action": self.arm_action, "arm_action_scale": self.arm_action_scale}, indent=2)
-        (Path(directory) / INTERFACE_FILE).write_text(text + "\n")
+        data = {"arm_action": self.arm_action, "arm_action_scale": self.arm_action_scale}
+        if self.arm_action == "incremental":
+            data["max_lead"] = self.max_lead
+        (Path(directory) / INTERFACE_FILE).write_text(json.dumps(data, indent=2) + "\n")
 
 # Orientation part of the hold target. The policy was trained with a constant zero rotation (x, y, z, w).
 TARGET_QUATERNION = (0.0, 0.0, 0.0, 1.0)
@@ -79,6 +93,7 @@ def build_observation(
     ball_position: Sequence[float],
     hold_target: Sequence[float],
     previous_action: Sequence[float],
+    target_lead: Sequence[float] | None = None,
 ) -> list[float]:
     """Assemble the policy input.
 
@@ -86,6 +101,8 @@ def build_observation(
     first gripper finger, in radians and radians per second, in the model's joint frame.
     ``ball_position`` and ``hold_target`` are metres in the arm base frame.
     ``previous_action`` is the policy's last raw output, or zeros on the first step.
+    ``target_lead`` is for an incremental interface only: each arm joint's previous
+    target minus its present angle.
     """
     for name, values, size in (
         ("joint_angles", joint_angles, 6),
@@ -101,27 +118,46 @@ def build_observation(
     observation += list(ball_position)
     observation += list(hold_target) + list(TARGET_QUATERNION)
     observation += list(previous_action)
+    if target_lead is not None:
+        if len(target_lead) != 5:
+            raise ValueError(f"target_lead needs 5 values, got {len(target_lead)}")
+        observation += list(target_lead)
     return [float(v) for v in observation]
 
 
 def decode_action(
-    action: Sequence[float], joint_angles: Sequence[float] | None = None, interface: Interface = Interface()
+    action: Sequence[float],
+    joint_angles: Sequence[float] | None = None,
+    interface: Interface = Interface(),
+    previous_targets: Sequence[float] | None = None,
 ) -> Command:
     """Turn the policy's raw output into joint targets and a gripper command.
 
-    ``joint_angles`` are the present arm joint angles, needed for a relative interface.
+    ``joint_angles`` are the present arm joint angles, needed for a relative or
+    incremental interface. ``previous_targets`` are the arm targets of the last
+    command, needed for an incremental one.
     """
     if len(action) != ACTION_SIZE:
         raise ValueError(f"action needs {ACTION_SIZE} values, got {len(action)}")
     if any(v != v for v in action):
         raise ValueError("action contains NaN")
-    if interface.arm_action == "relative":
-        if joint_angles is None or len(joint_angles) < 5:
-            raise ValueError("a relative interface needs the five present arm joint angles")
-        base = joint_angles[:5]
+    scale = interface.arm_action_scale
+    if interface.arm_action == "absolute":
+        targets = [start + scale * a for start, a in zip(pickup.START_POSE, action[:5])]
     else:
-        base = pickup.START_POSE
-    targets = [angle + interface.arm_action_scale * a for angle, a in zip(base, action[:5])]
+        if joint_angles is None or len(joint_angles) < 5:
+            raise ValueError(f"a {interface.arm_action} interface needs the five present arm joint angles")
+        present = joint_angles[:5]
+        if interface.arm_action == "relative":
+            targets = [angle + scale * a for angle, a in zip(present, action[:5])]
+        else:
+            if previous_targets is None or len(previous_targets) != 5:
+                raise ValueError("an incremental interface needs the five previous arm targets")
+            lead = interface.max_lead
+            targets = [
+                min(max(previous + scale * a, angle - lead), angle + lead)
+                for previous, a, angle in zip(previous_targets, action[:5], present)
+            ]
     return Command(tuple(arm.clamp_to_limits(targets)), gripper_open=action[5] >= 0.0)
 
 
@@ -142,8 +178,11 @@ class OnnxPolicy:
         self._session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         (model_input,) = self._session.get_inputs()
         self._input_name = model_input.name
-        if model_input.shape[-1] != OBSERVATION_SIZE:
-            raise ValueError(f"{path}: policy expects {model_input.shape[-1]} inputs, not {OBSERVATION_SIZE}")
+        expected = self.interface.observation_size
+        if model_input.shape[-1] != expected:
+            raise ValueError(
+                f"{path}: policy expects {model_input.shape[-1]} inputs, but its interface describes {expected}"
+            )
         (model_output,) = self._session.get_outputs()
         if model_output.shape[-1] != ACTION_SIZE:
             raise ValueError(f"{path}: policy produces {model_output.shape[-1]} outputs, not {ACTION_SIZE}")

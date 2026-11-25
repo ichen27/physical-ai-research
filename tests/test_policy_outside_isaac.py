@@ -12,7 +12,7 @@ from pathlib import Path
 from understudy import arm, pickup, runtime
 
 REPO = Path(__file__).resolve().parent.parent
-POLICY = REPO / "results" / "pickup" / "2026-11-24-varied" / "policy.onnx"
+POLICY = REPO / "results" / "pickup" / "2026-11-24-claw" / "policy.onnx"
 RECORDING = REPO / "tests" / "fixtures" / "pickup_rollout.json"
 
 
@@ -42,6 +42,7 @@ class RecordingTests(unittest.TestCase):
                 step["ball_position"],
                 step["hold_target"],
                 step["previous_action"],
+                step.get("target_lead"),
             )
             for ours, theirs in zip(built, step["observation"]):
                 self.assertAlmostEqual(ours, theirs, delta=1e-5)
@@ -55,10 +56,18 @@ class RecordingTests(unittest.TestCase):
     def test_joint_targets_are_derived_as_isaac_derived_them(self):
         interface = self.policy.interface
         self.assertEqual(interface, runtime.Interface.current())
+        checked = 0
         for step in self.steps:
-            command = runtime.decode_action(step["action"], step["joint_angles"], interface)
+            if step["arm_targets"] is None:  # the step on which Isaac Lab reset the scene
+                continue
+            checked += 1
+            previous = None
+            if step.get("target_lead") is not None:
+                previous = [angle + lead for angle, lead in zip(step["joint_angles"], step["target_lead"])]
+            command = runtime.decode_action(step["action"], step["joint_angles"], interface, previous)
             for ours, theirs in zip(command.arm_targets, step["arm_targets"]):
                 self.assertAlmostEqual(ours, theirs, delta=1e-5)
+        self.assertGreaterEqual(checked, len(self.steps) - 1)
 
 
 class MujocoPickupTests(unittest.TestCase):

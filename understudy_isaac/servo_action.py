@@ -38,12 +38,18 @@ class ProfiledJointPositionAction(JointPositionAction):
         default = self._asset.data.default_joint_pos.torch[:, self._joint_ids].clone()
         self._applied = default.clone()
         self._start = default.clone()
+        self._target = default.clone()  # the target the policy last asked for
         self._commands = default.unsqueeze(1).repeat(1, self._depth, 1)  # newest first
         self._age = torch.full((self.num_envs, self._depth), _SETTLED_S, device=self.device)
         self._delay = torch.zeros(self.num_envs, device=self.device)
         self._profile_time = torch.zeros(self.num_envs, device=self.device)
         self._rows = torch.arange(self.num_envs, device=self.device)
         self._sample(slice(None))
+
+    @property
+    def target_lead(self) -> torch.Tensor:
+        """How far the target the policy last asked for is ahead of each joint's present angle."""
+        return self._target - self._asset.data.joint_pos.torch[:, self._joint_ids]
 
     def _sample(self, ids) -> None:
         count = self._delay[ids].shape[0]
@@ -53,16 +59,22 @@ class ProfiledJointPositionAction(JointPositionAction):
         self._profile_time[ids] = low + (high - low) * torch.rand(count, device=self.device)
 
     def process_actions(self, actions: torch.Tensor):
-        if self.cfg.relative:
+        if self.cfg.mode == "absolute":
+            super().process_actions(actions)
+        else:
             self._raw_actions[:] = actions
             present = self._asset.data.joint_pos.torch[:, self._joint_ids]
-            self._processed_actions = present + self._raw_actions * self._scale
+            if self.cfg.mode == "relative":
+                target = present + self._raw_actions * self._scale
+            elif self.cfg.mode == "incremental":
+                target = self._target + self._raw_actions * self._scale
+                target = torch.maximum(torch.minimum(target, present + self.cfg.max_lead), present - self.cfg.max_lead)
+            else:
+                raise ValueError(f"unknown arm action mode {self.cfg.mode!r}")
             if self.cfg.clip is not None:
-                self._processed_actions = torch.clamp(
-                    self._processed_actions, min=self._clip[:, :, 0], max=self._clip[:, :, 1]
-                )
-        else:
-            super().process_actions(actions)
+                target = torch.clamp(target, min=self._clip[:, :, 0], max=self._clip[:, :, 1])
+            self._target = target
+            self._processed_actions = target
         self._commands = torch.roll(self._commands, shifts=1, dims=1)
         self._commands[:, 0] = self.processed_actions
         self._age = torch.roll(self._age, shifts=1, dims=1)
@@ -88,6 +100,7 @@ class ProfiledJointPositionAction(JointPositionAction):
         default = self._asset.data.default_joint_pos.torch[:, self._joint_ids]
         self._applied[ids] = default[ids]
         self._start[ids] = default[ids]
+        self._target[ids] = default[ids]
         self._commands[ids] = default[ids].unsqueeze(1)
         self._age[ids] = _SETTLED_S
         self._sample(ids)

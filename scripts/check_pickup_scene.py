@@ -74,7 +74,8 @@ def main() -> int:
     finger_id = joint_names.index(arm.GRIPPER_JOINT_NAMES[0])
     start = torch.tensor(pickup.START_POSE, device=env.device)
     scale = cfg.actions.arm_action.scale
-    relative = getattr(cfg.actions.arm_action, "relative", False)
+    mode = getattr(cfg.actions.arm_action, "mode", "absolute")
+    arm_term = env.action_manager.get_term("arm_action")
     chain = Chain()
 
     def ball_positions():
@@ -88,13 +89,17 @@ def main() -> int:
         """Hold ``poses``. With ``correct``, push the command past the pose to cancel servo sag."""
         wanted = torch.tensor(poses, device=env.device)
         command = wanted.clone()
-        action = torch.zeros(NUM_ENVS, 6, device=env.device)
+        action = torch.zeros(NUM_ENVS, env.action_manager.total_action_dim, device=env.device)
         action[:, 5] = gripper
         for step in range(steps):
             if correct and step % 10 == 9:
                 command += 0.5 * (wanted - robot.data.joint_pos.torch[:, arm_ids])
-            if relative:
+            if mode == "relative":
                 action[:, :5] = (command - robot.data.joint_pos.torch[:, arm_ids]) / scale
+            elif mode == "incremental":
+                # Ask for the step that takes the term's own target to the wanted pose.
+                previous = robot.data.joint_pos.torch[:, arm_ids] + arm_term.target_lead
+                action[:, :5] = (command - previous) / scale
             else:
                 action[:, :5] = (command - start) / scale
             env.step(action)

@@ -2,7 +2,7 @@
 
 Train a small robot arm in simulation, then run the trained policy on the real arm.
 
-![The simulated arm picking up a ball](results/pickup/2026-11-24-varied/pickup-frames.png)
+![The simulated arm picking up a ball](results/pickup/2026-11-24-claw/mujoco-pickup-frames.png)
 
 The arm is the ROBOTIS OMX follower (five joints plus a gripper, DYNAMIXEL XL430 and XL330 servos). Policies are trained with reinforcement learning in NVIDIA Isaac Lab on a rented GPU and are meant to run on the physical arm from a laptop.
 
@@ -17,14 +17,16 @@ This is an early project. Read this section before relying on anything.
 | Isaac Lab reach task (`understudy_isaac/`) | Working in Isaac Lab 3.0.0 |
 | Trained reach policy | Trained and measured **in simulation only**. See [results](results/reach/2026-11-24-baseline/README.md) |
 | Ball pickup task | Working in Isaac Lab 3.0.0 |
-| Trained pickup policy | Trained and measured **in simulation only**, and it does not yet hold the ball in a second simulator. See [results](results/pickup/2026-11-24-varied/README.md) |
+| Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
 | Real-arm runner and calibration tool | Written and tested against a simulated arm. **Not yet run on hardware** |
 | Locating the ball with a camera | Not started |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
 
-The current pickup policy is trained on the vendor's servo model with every simulated arm, ball and camera different. In the simulator it was trained in, it lifts the ball in 92% of 5,000 attempts and is barely affected by servo stiffness. It is **not ready for hardware**: in a second simulator it lifts the ball in 72–86% of attempts and then drops it in almost all of them, because its fingertip grip only holds in one physics engine.
+The current pickup policy is trained on the vendor's servo model with every simulated arm, ball and camera different, and with the gripper fingers given their real claw shape. Run in a second simulator, on the vendor's own model of the arm, it lifts the ball in 200 of 200 attempts and still holds it at the end in 96%. It holds the ball 3–4 cm from the requested point, not on it, and nothing has been tried on a real arm. It is the checkpoint from 1,500 of a planned 4,000 training iterations; the rest of that run is on a rented machine that stopped when its credit ran out.
+
+Getting there took three corrections that only showed up in the second simulator: the first policy depended on one servo stiffness, the training ball was too reluctant to roll, and the simulated fingers were solid wedges where the real ones are hollow claws.
 
 Known limitations:
 
@@ -46,6 +48,7 @@ Known limitations:
 | `understudy/dynamixel.py` | The real arm's servos. **Not yet run on hardware** |
 | `understudy/mujoco_arm.py` | The vendor's MuJoCo model of the arm behind the same servo interface |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
+| `scripts/build_finger_collision.py` | Builds the fingers' collision shapes as convex pieces that keep their claw shape |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
 | `scripts/check_sim_model.py` | Checks the simulated arm's masses, limits and kinematics against the shared description |
 | `scripts/check_pickup_scene.py` | Runs a fixed, unlearned grasp to confirm the simulated gripper can hold the ball |
@@ -55,7 +58,7 @@ Known limitations:
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
 | `scripts/real_arm.py` | Calibrates the real arm and runs a policy on it. **Not yet run on hardware** |
 | `results/` | Trained policies and their measurements |
-| `assets/generated/` | The generated simulation URDF |
+| `assets/generated/` | The generated simulation URDF and the fingers' collision pieces |
 | `assets/open_manipulator_description/` | Vendor arm model. See [third-party notices](THIRD_PARTY_NOTICES.md) |
 | `tests/` | Checks that run without a simulator or an arm |
 | `ci/run.sh` | The one validation command, used locally and in CI |
@@ -128,11 +131,11 @@ In the pickup task the ball's position is read from the simulator and then delay
 
 ```sh
 pip install -r requirements-dev.txt
-python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-varied/policy.onnx --attempts 200
-python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-varied/policy.onnx --attempts 3 --video pickup.mp4
+python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-claw/policy.onnx --attempts 200
+python scripts/mujoco_pickup.py --policy results/pickup/2026-11-24-claw/policy.onnx --attempts 3 --video pickup.mp4
 ```
 
-This check has already paid for itself twice: it showed that an early policy depended on one servo stiffness, and that the training scene's ball was too reluctant to roll.
+This check has paid for itself three times: it showed that an early policy depended on one servo stiffness, that the training scene's ball was too reluctant to roll, and that the simulated fingers could not hold a ball the way the real ones would.
 
 ## Real arm
 
@@ -148,15 +151,15 @@ python scripts/real_arm.py status          # servo models, modes, errors, temper
 python scripts/real_arm.py calibrate       # you hold the limp arm in the zero pose
 python scripts/real_arm.py check           # you touch the gripper tip to a ruler mark; reports the error
 python scripts/real_arm.py start-pose      # first powered motion: a slow move to the start pose and back
-python scripts/real_arm.py run --policy results/pickup/2026-11-24-varied/policy.onnx --ball 0.21 0.0 --dry-run
-python scripts/real_arm.py run --policy results/pickup/2026-11-24-varied/policy.onnx --ball 0.21 0.0
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --ball 0.21 0.0 --dry-run
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --ball 0.21 0.0
 ```
 
 Positions are metres from the centre of the arm's base plate, on the desk: x forward, y to the arm's left.
 
 Two things are missing for a proper run:
 
-- **A camera.** The policy is trained to be given the ball's position continuously. There is no camera pipeline yet. `--ball X Y` is a stand-in: the ball is assumed to stay where you put it until the gripper closes on something, and then to be at the gripper. It cannot see the ball roll away.
+- **A camera.** The policy is trained to be given the ball's position continuously. There is no camera pipeline yet. `--ball X Y` is a stand-in: the ball is assumed to stay where you put it until the gripper closes on something, and then to be at the gripper. It cannot see the ball roll away. In the MuJoCo cross-check the stand-in does as well as an exact camera (99.5% held), so a first attempt does not have to wait for a camera.
 - **Knowledge of the real servos.** Training covers a wide range of servo stiffness because the real value is unknown. Measuring it would allow a narrower, more reliable policy.
 
 ### Calibration file
@@ -183,7 +186,8 @@ This runs the unit tests and compiles every Python file. The tests include a rep
 | --- | --- | --- |
 | [Reach baseline, 2026-11-24](results/reach/2026-11-24-baseline/README.md) | First reach policy, simulation only | Exported policy (ONNX and TorchScript), training checkpoint, run settings, training curves, five evaluation files |
 | [Ball pickup, first policy, 2026-11-24](results/pickup/2026-11-24-first/README.md) | First pickup policy, identical simulated arms | Video and still frames, exported policy, training checkpoint, run settings, training curves, seven evaluation files |
-| [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Current pickup policy, checked in two simulators | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
+| [Ball pickup with claw-shaped fingers, 2026-11-24](results/pickup/2026-11-24-claw/README.md) | Current pickup policy, holds the ball in two simulators | MuJoCo video and still frames, exported policy and its interface file, eleven MuJoCo evaluation files. The training checkpoint is on a stopped rented machine |
+| [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Earlier pickup policy, which dropped the ball in the second simulator | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
 
 ## Contributing
 

@@ -113,8 +113,9 @@ class OmxBallPickupEnvCfg(LiftEnvCfg):
             joint_names=list(arm.ARM_JOINT_NAMES),
             preserve_order=True,
             scale=pickup.ARM_ACTION_SCALE,
-            use_default_offset=False,
-            relative=pickup.ARM_ACTION_MODE == "relative",
+            use_default_offset=pickup.ARM_ACTION_MODE == "absolute",
+            mode=pickup.ARM_ACTION_MODE,
+            max_lead=pickup.ARM_TARGET_MAX_LEAD,
             clip={j.name: (j.lower, j.upper) for j in arm.ARM_JOINTS},
             delay_range_s=variation.COMMAND_DELAY_S,
             profile_time_range_s=variation.PROFILE_TIME_S,
@@ -144,7 +145,11 @@ class OmxBallPickupEnvCfg(LiftEnvCfg):
                 "tip_cfg": tip,
             },
         )
+        if pickup.ARM_ACTION_MODE == "incremental":
+            policy.target_lead = ObsTerm(func=pickup_mdp.arm_target_lead, noise=Unoise(n_min=-0.01, n_max=0.01))
         self.observations.critic = CriticCfg()
+        if pickup.ARM_ACTION_MODE == "incremental":
+            self.observations.critic.target_lead = ObsTerm(func=pickup_mdp.arm_target_lead)
         self.observations.critic.joint_pos.params = {"asset_cfg": sensed_joints}
         self.observations.critic.joint_vel.params = {"asset_cfg": sensed_joints}
 

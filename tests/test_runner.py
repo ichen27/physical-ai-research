@@ -109,6 +109,24 @@ class LoopTests(unittest.TestCase):
         wanted = goals_from_command(runtime.decode_action([0.1, 0, 0, 0, 0, -1.0]), ODD)
         self.assertEqual(fake.written[-1], wanted)
 
+    def test_incremental_policy_gets_the_target_lead_and_accumulates_targets(self):
+        fake = FakeArm(ODD)
+        incremental = runtime.Interface("incremental", 0.1, 0.35)
+        seen = []
+
+        def policy(observation):
+            seen.append(list(observation))
+            return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+        steps = run_pickup(fake, policy, ODD, PlacedBall(0.2, 0.0), [0.19, 0.0, 0.13], 0.1, fake.advance, interface=incremental)
+        self.assertEqual(len(seen[0]), 33)
+        for value in seen[0][28:33]:  # at the start pose the target is where the joints are
+            self.assertAlmostEqual(value, 0.0, delta=arm.RAD_PER_TICK)
+        # Each step moves the first joint's target another 0.1 rad on from the last target.
+        self.assertAlmostEqual(steps[0].command.arm_targets[0], pickup.START_POSE[0] + 0.1)
+        self.assertAlmostEqual(steps[1].command.arm_targets[0], pickup.START_POSE[0] + 0.2)
+        self.assertAlmostEqual(steps[2].command.arm_targets[0], pickup.START_POSE[0] + 0.3)
+
     def test_dry_run_writes_nothing(self):
         fake = FakeArm(ODD)
         run_pickup(fake, lambda obs: [0.5] * 6, ODD, PlacedBall(0.2, 0.0), [0.19, 0.0, 0.13], 0.5, fake.advance, send=False)

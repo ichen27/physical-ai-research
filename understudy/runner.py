@@ -120,15 +120,20 @@ def run_pickup(
     steps: list[Step] = []
     previous_action = [0.0] * runtime.ACTION_SIZE
     gripper_open = True
+    # The arm starts each attempt holding the start pose, so that is the first "previous target".
+    targets = list(pickup.START_POSE)
+    incremental = interface.arm_action == "incremental"
     for _ in range(int(round(seconds * arm.CONTROL_HZ))):
         angles, velocities = sensed_from_reading(io.read(), calibration)
         check_safe(angles[:5])
         ball_position = tuple(ball.position(angles[:5], angles[5], gripper_open))
-        action = list(policy(runtime.build_observation(angles, velocities, ball_position, hold_target, previous_action)))
-        command = runtime.decode_action(action, angles[:5], interface)
+        lead = [target - angle for target, angle in zip(targets, angles[:5])] if incremental else None
+        observation = runtime.build_observation(angles, velocities, ball_position, hold_target, previous_action, lead)
+        action = list(policy(observation))
+        command = runtime.decode_action(action, angles[:5], interface, targets)
         if send:
             io.write_goals(goals_from_command(command, calibration))
         steps.append(Step(tuple(angles), ball_position, tuple(action), command))
-        previous_action, gripper_open = action, command.gripper_open
+        previous_action, gripper_open, targets = action, command.gripper_open, list(command.arm_targets)
         advance()
     return steps

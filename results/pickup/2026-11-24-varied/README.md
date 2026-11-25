@@ -2,6 +2,8 @@
 
 The pickup task retrained on the vendor's servo model, with every simulated arm, ball and camera different, and then checked in a second simulator.
 
+Superseded by [the version with claw-shaped fingers](../2026-11-24-claw/README.md), which fixed the grip described below. This policy was trained with the fingers as convex hulls and with relative commands; the task has changed since, so it can no longer be re-evaluated in Isaac Lab with the current code. The MuJoCo numbers below were measured with hull fingers; `scripts/mujoco_pickup.py --hull_fingers` reproduces that.
+
 **Verdict: not ready for a real arm.** In the simulator it was trained in, this policy lifts the ball in about 92% of attempts whatever the servo stiffness. In a second simulator it lifts the ball in 72–86% of attempts and then drops it in almost all of them. A policy that cannot keep hold of the ball in a second simulation should not be expected to on hardware.
 
 ![Four frames of the simulated arm picking up the ball](pickup-frames.png)

@@ -40,8 +40,13 @@ LIFTED_HEIGHT_M = 0.05
 HOLD_RADIUS_M = 0.03
 EPISODE_SECONDS = 5.0
 
-# How the policy's five arm outputs become joint targets. "relative": target is the
-# joint's present angle plus ARM_ACTION_SCALE times the output. Policies trained
-# before this was introduced used "absolute": start pose plus 0.5 times the output.
-ARM_ACTION_MODE = "relative"
-ARM_ACTION_SCALE = 0.2
+# How the policy's five arm outputs become joint targets.
+#   "incremental": target = previous target + ARM_ACTION_SCALE * output, kept within
+#                  ARM_TARGET_MAX_LEAD of the joint's present angle. Holding still is an output
+#                  of zero whatever the servo stiffness. The policy also sees how far each
+#                  target is ahead of its joint.
+#   "relative":    target = present angle + scale * output (earlier policies, scale 0.2).
+#   "absolute":    target = start pose + scale * output (the first policies, scale 0.5).
+ARM_ACTION_MODE = "incremental"
+ARM_ACTION_SCALE = 0.1
+ARM_TARGET_MAX_LEAD = 0.35

@@ -132,3 +132,13 @@ def randomize_gripper_force(env, env_ids, scale_range: tuple[float, float], asse
     low, high = scale_range
     scale = low + (high - low) * torch.rand(len(env_ids), 1, device=limits.device)
     robot.write_joint_effort_limit_to_sim(limits * scale, joint_ids=joint_ids, env_ids=env_ids)
+
+
+def arm_target_lead(env) -> torch.Tensor:
+    """How far each arm joint's commanded target is ahead of its present angle.
+
+    On a real arm this is the last goal sent minus the encoder reading. It is
+    proportional to the torque the servo is applying, so it tells the policy about
+    load and contact without a force sensor.
+    """
+    return env.action_manager.get_term("arm_action").target_lead

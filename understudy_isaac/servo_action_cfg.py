@@ -14,9 +14,16 @@ class ProfiledJointPositionActionCfg(JointPositionActionCfg):
     """Time before a new command starts to take effect."""
     profile_time_range_s: tuple[float, float] = (0.0, 0.0)
     """Time the servo takes to move its goal to a new command. Zero means at once."""
-    relative: bool = False
-    """If True, the command is an offset from the joint's present angle instead of from the default pose.
+    mode: str = "absolute"
+    """How an output becomes a joint target.
 
-    A command relative to where the joint is does not depend on how far the servo
-    sags under load, so the same policy suits firm and soft servos.
+    ``absolute``: default pose + scale * output.
+    ``relative``: the joint's present angle + scale * output.
+    ``incremental``: the previous target + scale * output. Holding still then needs an
+    output of zero whatever the servo stiffness, because the target stays where it was put.
+    """
+    max_lead: float = 0.35
+    """In incremental mode, how far (rad) the target may run ahead of the joint's present angle.
+
+    Without this the target would keep moving while the arm is blocked, for example against the desk.
     """

@@ -51,12 +51,16 @@ def main() -> None:
     names = list(robot.joint_names)
     sensed = [names.index(n) for n in (*arm.ARM_JOINT_NAMES, arm.GRIPPER_JOINT_NAMES[0])]
 
+    arm_term = base.action_manager.get_term("arm_action")
+    lead = (lambda: arm_term.target_lead) if getattr(arm_term.cfg, "mode", "absolute") == "incremental" else None
+
     def readings():
         return {
             "joint_angles": robot.data.joint_pos.torch[0, sensed].tolist(),
             "joint_velocities": robot.data.joint_vel.torch[0, sensed].tolist(),
             "ball_position": (ball.data.root_pos_w.torch[0, :3] - robot.data.root_pos_w.torch[0]).tolist(),
             "hold_target": base.command_manager.get_command("object_pose")[0, :3].tolist(),
+            "target_lead": lead()[0].tolist() if lead is not None else None,
         }
 
     steps = []
@@ -77,8 +81,9 @@ def main() -> None:
         with torch.inference_mode():
             obs, _, dones, _ = env.step(action)
             policy.reset(dones)
-        # The joint targets Isaac Lab derived from that action.
-        steps[-1]["arm_targets"] = base.action_manager.get_term("arm_action").processed_actions[0].tolist()
+        # The joint targets Isaac Lab derived from that action. On the step that ends the
+        # attempt the scene has already been reset, so there is nothing valid to record.
+        steps[-1]["arm_targets"] = None if bool(dones[0]) else arm_term.processed_actions[0].tolist()
         if bool(dones[0]):
             break
 

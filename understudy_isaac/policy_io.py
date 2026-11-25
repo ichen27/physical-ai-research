@@ -30,5 +30,7 @@ def load_policy(task: str, env_cfg, checkpoint: str, export_dir: str | Path, ren
     runner.export_policy_to_jit(path=str(export_dir), filename="policy.pt")
     runner.export_policy_to_onnx(path=str(export_dir), filename="policy.onnx")
     arm_action = env_cfg.actions.arm_action
-    Interface("relative" if getattr(arm_action, "relative", False) else "absolute", float(arm_action.scale)).save(export_dir)
+    Interface(
+        getattr(arm_action, "mode", "absolute"), float(arm_action.scale), float(getattr(arm_action, "max_lead", 0.0))
+    ).save(export_dir)
     return env, policy
