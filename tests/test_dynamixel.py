@@ -23,6 +23,7 @@ class FakeBus:
         self.registers: dict[tuple[int, int], int] = {}
         self.instruction_error: dict[int, int] = {}
         self.writes: list[tuple[int, int, int]] = []
+        self.restarts: list[int] = []
 
     def set(self, dxl_id: int, register: tuple[int, int], value: int) -> None:
         self.registers[(dxl_id, register[0])] = value
@@ -59,6 +60,11 @@ class FakeBus:
                 if not bus.instruction_error.get(dxl_id):
                     bus.registers[(dxl_id, address)] = value
                 return 0, bus.error_byte(dxl_id)
+
+            def reboot(self, port, dxl_id):
+                bus.restarts.append(dxl_id)
+                bus.registers[(dxl_id, dynamixel.HARDWARE_ERROR[0])] = 0
+                return 0, 0
 
             read1ByteTxRx = read2ByteTxRx = read4ByteTxRx = _read
             write1ByteTxRx = write2ByteTxRx = write4ByteTxRx = _write
@@ -156,6 +162,44 @@ class Readiness(unittest.TestCase):
         self.assertEqual(dynamixel.hardware_error_names(0), [])
         self.assertEqual(dynamixel.hardware_error_names(0b100101), ["input voltage", "overheating", "overload"])
         self.assertEqual(dynamixel.hardware_error_names(0b10), ["unknown bit 1"])
+
+
+def powered_after_running_on_usb() -> FakeBus:
+    """The supply has been switched on, but the three servos still hold the error from before."""
+    bus = healthy_arm()
+    for dxl_id in (11, 12, 13):
+        bus.set(dxl_id, dynamixel.HARDWARE_ERROR, 0b1)
+    return bus
+
+
+@mock.patch.object(dynamixel.time, "sleep", lambda seconds: None)
+class RestartingFaultedServos(unittest.TestCase):
+    def test_only_the_servos_with_an_error_are_restarted_and_nothing_is_written(self):
+        bus = powered_after_running_on_usb()
+        robot = open_arm(bus)
+        self.assertEqual(robot.restart_faulted(), [11, 12, 13])
+        self.assertEqual(bus.restarts, [11, 12, 13])
+        self.assertEqual(bus.writes, [])
+        self.assertEqual(robot.check_ready(), [])
+
+    def test_a_healthy_arm_is_left_alone(self):
+        bus = healthy_arm()
+        self.assertEqual(open_arm(bus).restart_faulted(), [])
+        self.assertEqual(bus.restarts, [])
+
+    def test_no_restart_while_the_power_is_still_too_low(self):
+        bus = unpowered_arm()
+        with self.assertRaises(RuntimeError) as raised:
+            open_arm(bus).restart_faulted()
+        self.assertIn("4.6 V", str(raised.exception))
+        self.assertEqual(bus.restarts, [])
+
+    def test_no_restart_while_any_servo_has_torque_on(self):
+        bus = powered_after_running_on_usb()
+        bus.set(15, dynamixel.TORQUE_ENABLE, 1)
+        with self.assertRaises(RuntimeError):
+            open_arm(bus).restart_faulted()
+        self.assertEqual(bus.restarts, [])
 
 
 if __name__ == "__main__":

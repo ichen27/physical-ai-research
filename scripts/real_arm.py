@@ -4,6 +4,7 @@ ONLY THE status STEP HAS RUN ON A REAL ARM; nothing here has driven its motors y
 a hand on the arm's power switch, and go through the steps in order:
 
     python scripts/real_arm.py status                      # reads only
+    python scripts/real_arm.py clear-errors                # only if status reports a hardware error
     python scripts/real_arm.py calibrate                   # reads only; you pose the arm by hand
     python scripts/real_arm.py check                       # reads only; you touch the gripper to a mark
     python scripts/real_arm.py start-pose                  # first powered motion: slow move to the start pose
@@ -60,6 +61,18 @@ def require_torque_off(robot) -> None:
     powered = [row.dxl_id for row in robot.status() if row.torque_on]
     if powered:
         raise SystemExit(f"torque is on for servos {powered}; this step needs the arm limp. Nothing was changed.")
+
+
+def cmd_clear_errors(args) -> None:
+    robot = open_arm(args)
+    try:
+        restarted = robot.restart_faulted()
+    except RuntimeError as error:
+        robot._port.closePort()
+        raise SystemExit(f"nothing was restarted: {error}") from None
+    print(f"restarted servos {restarted}" if restarted else "no servo has a hardware error; nothing was restarted")
+    robot._port.closePort()
+    cmd_status(args)
 
 
 def cmd_status(args) -> None:
@@ -200,6 +213,9 @@ def main() -> None:
     parser.add_argument("--calibration", default=str(DEFAULT_CALIBRATION))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Show the servos' state. Reads only.").set_defaults(run=cmd_status)
+    commands.add_parser(
+        "clear-errors", help="Restart servos that report a hardware error. The arm stays limp; nothing moves."
+    ).set_defaults(run=cmd_clear_errors)
     calibrate = commands.add_parser("calibrate", help="Capture this arm's encoder offsets by hand. Reads only.")
     calibrate.add_argument("--signs", type=int, nargs=5, default=[1, 1, 1, 1, 1], choices=[1, -1])
     calibrate.set_defaults(run=cmd_calibrate)

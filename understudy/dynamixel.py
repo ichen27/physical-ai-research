@@ -165,6 +165,31 @@ class DynamixelArm:
                 problems.append(f"{name} operating mode {row.operating_mode}, expected position (3) or extended position (4)")
         return problems
 
+    def restart_faulted(self) -> list[int]:
+        """Restart the servos that have a hardware error on record, and return their IDs.
+
+        A servo keeps a hardware error until it is restarted, even after the
+        cause has gone. A restart leaves it limp and puts its volatile settings
+        back to their defaults; nothing permanent changes and nothing moves.
+        Refuses while any servo has torque on or while a cause is still present.
+        """
+        rows = self.status()
+        if any(row.torque_on for row in rows):
+            raise RuntimeError("torque is on; servos are only restarted while the arm is limp")
+        faulted = [row for row in rows if row.hardware_error]
+        for row in faulted:
+            if row.voltage < row.min_voltage:
+                raise RuntimeError(f"servo {row.dxl_id} is still getting only {row.voltage:.1f} V; fix the power first")
+            if row.temperature_c >= MAX_TEMPERATURE_C:
+                raise RuntimeError(f"servo {row.dxl_id} is still at {row.temperature_c} C; let it cool first")
+        for row in faulted:
+            result, error = self._packet.reboot(self._port, row.dxl_id)
+            if result != self._sdk.COMM_SUCCESS or error & ~ALERT:
+                raise RuntimeError(f"restarting servo {row.dxl_id}: communication {result}, device error {error}")
+        if faulted:
+            time.sleep(1.0)  # a restarting servo does not answer for a moment
+        return [row.dxl_id for row in faulted]
+
     # Driving -----------------------------------------------------------------
 
     def configure(self) -> None:

@@ -148,6 +148,7 @@ Go through these in order. The first three only read.
 ```sh
 pip install dynamixel_sdk onnxruntime numpy
 python scripts/real_arm.py status          # servo models, modes, errors, temperatures
+python scripts/real_arm.py clear-errors    # only if status reports a hardware error; restarts those servos, nothing moves
 python scripts/real_arm.py calibrate       # you hold the limp arm in the zero pose
 python scripts/real_arm.py check           # you touch the gripper tip to a ruler mark; reports the error
 python scripts/real_arm.py start-pose      # first powered motion: a slow move to the start pose and back
