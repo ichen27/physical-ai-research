@@ -63,14 +63,17 @@ def require_torque_off(robot) -> None:
 
 
 def cmd_status(args) -> None:
+    from understudy.dynamixel import hardware_error_names
+
     robot = open_arm(args)
     try:
-        print("id  model        drive  mode  torque  error  position  temp  P gain")
+        print("id  model        drive  mode  torque  volts  position  temp  P gain  hardware error")
         for row in robot.status():
             print(
                 f"{row.dxl_id:<3} {row.model:<12} {row.drive_mode:<6} {row.operating_mode:<5} "
-                f"{'on' if row.torque_on else 'off':<7} {row.hardware_error:<6} {row.position:<9} "
-                f"{row.temperature_c:<5} {row.position_p_gain}"
+                f"{'on' if row.torque_on else 'off':<7} {row.voltage:<6.1f} {row.position:<9} "
+                f"{row.temperature_c:<5} {row.position_p_gain:<7} "
+                f"{', '.join(hardware_error_names(row.hardware_error)) or 'none'}"
             )
         problems = robot.check_ready()
         print("ready to drive" if not problems else "not ready:\n  " + "\n  ".join(problems))

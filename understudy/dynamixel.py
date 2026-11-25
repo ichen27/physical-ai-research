@@ -36,8 +36,21 @@ PROFILE_VELOCITY = (112, 4)
 GOAL_POSITION = (116, 4)
 PRESENT_VELOCITY = (128, 4)
 PRESENT_POSITION = (132, 4)
+PRESENT_INPUT_VOLTAGE = (144, 2)  # units of 0.1 V
 PRESENT_TEMPERATURE = (146, 1)
+MIN_VOLTAGE_LIMIT = (34, 2)  # units of 0.1 V
 SIGNED = {GOAL_POSITION[0], PRESENT_VELOCITY[0], PRESENT_POSITION[0]}
+
+# The error byte of every reply. Its top bit is an alert: the servo has a
+# hardware error on record, but the instruction itself was carried out. Only the
+# lower seven bits say the instruction failed.
+ALERT = 0x80
+HARDWARE_ERRORS = {0: "input voltage", 2: "overheating", 3: "motor encoder", 4: "electrical shock", 5: "overload"}
+
+
+def hardware_error_names(value: int) -> list[str]:
+    """The Hardware Error Status register as words."""
+    return [HARDWARE_ERRORS.get(bit, f"unknown bit {bit}") for bit in range(8) if value >> bit & 1]
 
 TIME_BASED_PROFILE = 0x04  # Drive Mode bit 2
 POSITION_MODES = (3, 4)  # position, extended position
@@ -61,6 +74,8 @@ class ServoStatus:
     position: int
     temperature_c: int
     position_p_gain: int
+    voltage: float
+    min_voltage: float
 
 
 class DynamixelArm:
@@ -88,7 +103,7 @@ class DynamixelArm:
     def _read(self, dxl_id: int, register: tuple[int, int]) -> int:
         address, size = register
         value, result, error = getattr(self._packet, f"read{size}ByteTxRx")(self._port, dxl_id, address)
-        if result != self._sdk.COMM_SUCCESS or error:
+        if result != self._sdk.COMM_SUCCESS or error & ~ALERT:
             raise RuntimeError(f"reading servo {dxl_id} address {address}: communication {result}, device error {error}")
         if address in SIGNED and value >= 2 ** (8 * size - 1):
             value -= 2 ** (8 * size)
@@ -98,7 +113,7 @@ class DynamixelArm:
         address, size = register
         raw = value & ((1 << (8 * size)) - 1)
         result, error = getattr(self._packet, f"write{size}ByteTxRx")(self._port, dxl_id, address, raw)
-        if result != self._sdk.COMM_SUCCESS or error:
+        if result != self._sdk.COMM_SUCCESS or error & ~ALERT:
             raise RuntimeError(f"writing servo {dxl_id} address {address}: communication {result}, device error {error}")
 
     # Inspection (reads only) -------------------------------------------------
@@ -118,6 +133,8 @@ class DynamixelArm:
                     position=self._read(dxl_id, PRESENT_POSITION),
                     temperature_c=self._read(dxl_id, PRESENT_TEMPERATURE),
                     position_p_gain=self._read(dxl_id, POSITION_P_GAIN),
+                    voltage=self._read(dxl_id, PRESENT_INPUT_VOLTAGE) / 10,
+                    min_voltage=self._read(dxl_id, MIN_VOLTAGE_LIMIT) / 10,
                 )
             )
         return rows
@@ -130,7 +147,12 @@ class DynamixelArm:
             if row.model != joint_model:
                 problems.append(f"{name} is a {row.model}, expected {joint_model}")
             if row.hardware_error:
-                problems.append(f"{name} reports hardware error {row.hardware_error}")
+                problems.append(f"{name} reports a hardware error: {', '.join(hardware_error_names(row.hardware_error))}")
+            if row.voltage < row.min_voltage:
+                problems.append(
+                    f"{name} is getting {row.voltage:.1f} V and needs at least {row.min_voltage:.1f} V: "
+                    "is the arm's power supply plugged in and switched on?"
+                )
             if row.temperature_c >= MAX_TEMPERATURE_C:
                 problems.append(f"{name} is at {row.temperature_c} C")
             if not row.drive_mode & TIME_BASED_PROFILE:
