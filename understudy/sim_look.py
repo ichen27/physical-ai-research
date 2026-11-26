@@ -159,6 +159,7 @@ class Scene:
         # How many times further than usual the true camera strays from the nominal one: to measure
         # what a camera calibration that is more wrong than expected costs.
         self.camera_spread = camera_spread
+        self.clutter = True  # whether other things lie on the desk; False leaves it bare
         model = sim.model
         self._width, self._height = PICTURE_WIDTH * _RENDER_SCALE, PICTURE_HEIGHT * _RENDER_SCALE
         self._renderer = mujoco.Renderer(model, height=self._height, width=self._width)
@@ -266,6 +267,8 @@ class Scene:
 
         # Other things on the desk, red and orange ones among them, clear of where the arm goes.
         shown = rng.randint(2, DISTRACTORS)
+        if not self.clutter:
+            shown = 0
         for index, geom in enumerate(self._things):
             if index >= shown:
                 model.geom_pos[geom] = _parked(index)

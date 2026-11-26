@@ -35,20 +35,19 @@ from .camera_collect import WIDE_RANGE, move_seconds, pose_is_clear
 from .kinematics import Chain
 from .mujoco_arm import MujocoArm, build_model
 from .runner import AIM_LEFT_M, REACH_BAND_M, SWIVEL_AXIS_X_M, in_turned_frame, run_pickup, turn_to_face, turned
+from .seek import LOOK_POSE, SCAN
 from .sim_look import PICTURE_HEIGHT, PICTURE_WIDTH, Scene, dress, student_camera
 from .student import BALL_SCALE, GUESS_SIZE, LEAD_LIMIT_RAD, PROPRIO_SIZE, SPEED_LIMIT_RAD_S, Brain, StudentNet
 
 # Balls are put where facing them means turning at most this far.
 AHEAD_TURN_RAD = 0.45
-# The pose the ball is looked for from: the start pose with the shoulder back 0.3 rad, the elbow
-# in 0.4 and the wrist down 0.4, which lifts the camera to about 28 cm. With the first real arm's
-# calibrated camera it shows every place a ball can be, whole; the start pose shows 43% of them.
-LOOK_POSE = (0.0, -0.9, 0.1, 1.6, 0.0)
+# Balls further round than one look shows are found by a sweep of looks (``understudy.seek.SCAN``).
 # When the arm is faced using the ball's true place instead of the student's guess, the place is
 # put this far out at random, about what the student's guess is out by. The student then also
 # learns from first guesses that are wrong, and from balls not exactly where facing aims to put them.
 FACING_NOISE_M = 0.008
 TRAINING_SECONDS = 10.0
+NOWHERE = (3.0, 3.0)  # where the ball is put when there is to be no ball on the desk
 IN_VIEW = 0.5  # the share of the ball's disc that must be seen for it to count as in the picture
 BURN_IN = 8  # steps at the start of each training window that only warm the memory up
 
@@ -183,44 +182,100 @@ def find_ball(scene: Scene, brain: Brain, hold_target: Sequence[float], pose: Se
     return (float(np.median([p[0] for p, _ in seen])), float(np.median([p[1] for p, _ in seen])))
 
 
+def search_for_ball(sim: MujocoArm, scene: Scene, brain: Brain, hold_target: Sequence[float],
+                    sweep: Sequence[float] = SCAN) -> tuple[tuple[float, float], float, int] | None:
+    """Look for the ball from the look pose, swivelling to each angle of ``sweep`` in turn until the student sees one.
+
+    The arm must be in the look pose, facing straight ahead. Returns where the student says
+    the ball is (x, y in the arm's own frame), the swivel it was seen from, and how many
+    looks it took; or None if no look showed a ball. The arm is left where it last looked from.
+
+    A look from a swivelled arm is shown to the student as a look from straight ahead in a
+    frame turned by the same angle, and its answer is turned back. The desk is the same
+    whichever way the swivel points, so every look is one the student was trained on: no
+    training is needed to search wider than one look.
+    """
+    calibration = sim.calibration
+    gripper = [calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)]
+    swivel = 0.0
+    for number, angle in enumerate(sweep, 1):
+        if angle != swivel:
+            sim.move_slowly(calibration.to_ticks((angle, *LOOK_POSE[1:])) + gripper, move_seconds([swivel], [angle]))
+            swivel = angle
+        seen = find_ball(scene, brain, hold_target)
+        if seen is not None:
+            there = in_turned_frame((*seen, pickup.BALL_RADIUS_M), -angle)
+            return (there[0], there[1]), angle, number
+    return None
+
+
 def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, brain: Brain | None = None,
                 drive: str = "student", facing: str = "student", seconds: float = pickup.EPISODE_SECONDS,
-                record: bool = False, blank: tuple[int, int] | None = None, ball_source=None) -> tuple[dict, Episode | None]:
+                record: bool = False, blank: tuple[int, int] | None = None, ball_source=None,
+                ball: Sequence[float] | None = None, ball_present: bool = True) -> tuple[dict, Episode | None]:
     """One attempt: a ball ahead of the arm, a new look; rise and look for it, face it, come down to the
     start pose, and run the policy with the speed limits.
 
-    ``facing`` is "student" (the arm turns to where the student says the ball is), "truth"
-    (to where it is, a few millimetres out at random) or "exact". ``ball_source`` "student"
+    ``facing`` is "student" (the arm turns to where the student says the ball is, from one
+    look straight ahead), "search" (the student sweeps left and right until it sees the ball,
+    faces it, looks again, and refuses a ball outside the distances the arm lifts from),
+    "truth" (to where it is, a few millimetres out at random) or "exact". ``ball`` puts the
+    ball at a chosen place instead of a random one ahead of the arm; with ``ball_present``
+    false there is no ball on the desk at all. ``ball_source`` "student"
     feeds a teacher that drives the student's own idea of where the ball is instead of the
     truth: the student's eye with the teacher's hand. Returns what happened and, if asked, the record.
     """
-    ball = place_ball(rng)
+    ball = tuple(ball) if ball is not None else place_ball(rng)
     target = [rng.uniform(*pickup.HOLD_TARGET[axis]) for axis in "xyz"]
-    sim.reset(ball)
+    sim.reset(ball if ball_present else NOWHERE)
     sim.after_step = None
     scene.new_look(rng, ball)
-    outcome = {"found": True, "lifted": False, "ever_lifted": False, "stopped": False, "facing_error_m": None}
+    outcome = {"found": True, "lifted": False, "ever_lifted": False, "stopped": False, "facing_error_m": None,
+               "refused": None, "looks": 1}
     calibration = sim.calibration
     gripper = [calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)]
     sim.move_slowly(calibration.to_ticks(LOOK_POSE) + gripper, move_seconds(pickup.START_POSE, LOOK_POSE))
     outcome["in_view_from_look_pose"] = scene.picture_now()[1]
+    raised_at = 0.0
     if facing == "student":
         guess = find_ball(scene, brain, target)
         if guess is None:
             return {**outcome, "found": False}, None
         outcome["facing_error_m"] = math.dist(guess, ball)
+    elif facing == "search":
+        found = search_for_ball(sim, scene, brain, target)
+        if found is None:
+            return {**outcome, "found": False, "looks": len(SCAN)}, None
+        guess, raised_at, outcome["looks"] = found
+        try:
+            turn = turn_to_face(guess)
+        except ValueError:
+            return {**outcome, "refused": "too far round"}, None
+        # Face it, still raised, and look again: the ball is now near the middle of the picture.
+        sim.move_slowly(calibration.to_ticks((turn, *LOOK_POSE[1:])) + gripper, move_seconds([raised_at], [turn]))
+        raised_at = turn
+        again = find_ball(scene, brain, target)
+        if again is not None:
+            there = in_turned_frame((*again, pickup.BALL_RADIUS_M), -turn)
+            guess = (there[0], there[1])
+        outcome["facing_error_m"] = math.dist(guess, ball)
+        distance = math.hypot(guess[0] - SWIVEL_AXIS_X_M, guess[1])
+        outcome["said_distance_m"] = distance
+        if not REACH_BAND_M[0] <= distance <= REACH_BAND_M[1]:
+            return {**outcome, "refused": "too near" if distance < REACH_BAND_M[0] else "too far"}, None
     elif facing == "exact":
         guess = ball
     elif facing == "truth":
         guess = (ball[0] + rng.gauss(0, FACING_NOISE_M), ball[1] + rng.gauss(0, FACING_NOISE_M))
     else:
-        raise ValueError("facing must be 'student', 'truth' or 'exact'")
+        raise ValueError("facing must be 'student', 'search', 'truth' or 'exact'")
     try:
         turn = turn_to_face(guess)
     except ValueError:
-        return {**outcome, "found": False}, None
+        return {**outcome, "refused": "too far round"}, None
     frame = turned(calibration, turn)
-    sim.move_slowly(frame.to_ticks(pickup.START_POSE) + gripper, move_seconds(LOOK_POSE, (turn, *pickup.START_POSE[1:])))
+    sim.move_slowly(frame.to_ticks(pickup.START_POSE) + gripper,
+                    move_seconds((raised_at, *LOOK_POSE[1:]), (turn, *pickup.START_POSE[1:])))
     first = in_turned_frame((*guess, pickup.BALL_RADIUS_M), turn)
     outcome["in_view_from_start_pose"] = scene.picture_now()[1]
 

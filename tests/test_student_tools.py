@@ -132,6 +132,33 @@ class RealPictureScoringTests(unittest.TestCase):
             self.tool.describe_pictures(self.brain, self.arguments(pictures=[str(odd)]))
 
 
+class SearchTableTests(unittest.TestCase):
+    def test_rates_are_given_overall_by_turn_and_by_distance(self):
+        tool = load_script("evaluate_search")
+        rows = []
+        for index in range(40):
+            turn = -57 + 114 * index / 39
+            rows.append({"found": index % 4 != 0, "lifted": index % 2 == 1, "refused": None, "looks": 1 + index % 3,
+                         "facing_error_m": 0.004, "turn_deg": turn, "distance_cm": 15 + 9 * (index % 10) / 9, "stopped": False})
+        out = tool.table(rows, 57.0)
+        self.assertEqual(out["all"]["attempts"], 40)
+        self.assertEqual(out["all"]["found"], 0.75)
+        self.assertEqual(out["all"]["lifted_at_the_end"], 0.5)
+        self.assertEqual(sum(line["attempts"] for line in out["by_turn_needed_to_face_the_ball"].values()), 40)
+        self.assertEqual(sum(line["attempts"] for line in out["by_distance_from_swivel_axis"].values()), 40)
+        self.assertEqual(len(out["by_turn_needed_to_face_the_ball"]), 5)
+        self.assertEqual(out["all"]["first_guess_error_mm_median"], 4.0)
+
+    def test_a_ball_is_put_where_the_turn_to_face_it_is_the_one_asked_for(self):
+        from understudy.runner import SWIVEL_AXIS_X_M, turn_to_face
+
+        tool = load_script("evaluate_search")
+        for distance, turn in ((0.15, -0.9), (0.2, 0.0), (0.24, 0.8)):
+            x, y = tool.ball_at(distance, turn)
+            self.assertAlmostEqual(turn_to_face((x, y)), turn, places=9)
+            self.assertAlmostEqual(math.hypot(x - SWIVEL_AXIS_X_M, y), distance, places=9)
+
+
 class GatheringTests(unittest.TestCase):
     """Attempts in the simulator with rendered pictures. Skipped where nothing can be rendered."""
 
@@ -243,6 +270,94 @@ class GatheringTests(unittest.TestCase):
                 np.savez = kept
             self.assertEqual(seen, [[]])  # while it was being written, no .npz file was there to be opened
             self.assertTrue(target.exists())
+
+    def honest_eyes(self):
+        """A stand-in for a trained student's eye: says where the ball truly is whenever all of it is in the picture.
+
+        Like the real one it is shown a swivelled look as a look from straight ahead, so it
+        answers in the frame turned by the swivel.
+        """
+        from understudy.runner import in_turned_frame
+
+        sim, scene = self.sim, self.scene
+
+        class Honest(student.Brain):
+            def glance(self, image, readings):
+                swivel = sim.calibration.to_rad(sim.read().positions[:5])[0]
+                where = in_turned_frame(tuple(float(v) for v in sim.ball()), swivel)
+                return where, 1.0 if scene.picture_now()[1] > 0.95 else 0.0
+
+        return Honest(student.StudentNet())
+
+    def ball_round(self, distance, turn_deg):
+        from understudy.runner import AIM_LEFT_M, SWIVEL_AXIS_X_M
+
+        bearing = math.radians(turn_deg) + math.asin(AIM_LEFT_M / distance)
+        return (SWIVEL_AXIS_X_M + distance * math.cos(bearing), distance * math.sin(bearing))
+
+    def test_a_ball_far_round_is_found_by_sweeping_and_faced(self):
+        from understudy import seek
+        from understudy.kinematics import Chain
+
+        looks = {}
+        for turn_deg in (-50.0, 48.0):
+            ball = self.ball_round(0.2, turn_deg)
+            outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(4), brain=self.honest_eyes(), drive="student",
+                                            facing="search", seconds=0.5, ball=ball)
+            looks[turn_deg] = outcome["looks"]
+            with self.subTest(turn=turn_deg):
+                self.assertTrue(outcome["found"])
+                self.assertIsNone(outcome["refused"])
+                # One look is enough only if the ball is in the picture from straight ahead.
+                straight = self.scene.nominal.sight((*ball, pickup.BALL_RADIUS_M), seek.LOOK_POSE, Chain())
+                if straight is None or not (-100 < straight.u < self.scene.nominal.width + 100):
+                    self.assertGreaterEqual(outcome["looks"], 2)
+                self.assertLess(outcome["facing_error_m"], 0.002)
+                self.assertAlmostEqual(outcome["said_distance_m"], 0.2, delta=0.002)
+                # The arm ended up turned to face it.
+                swivel = self.sim.calibration.to_rad(self.sim.read().positions[:5])[0]
+                self.assertAlmostEqual(math.degrees(swivel), turn_deg, delta=6.0)
+        self.assertGreaterEqual(max(looks.values()), 2)  # at least one of the two was out of the first picture
+
+    def test_a_ball_straight_ahead_takes_one_look(self):
+        outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(5), brain=self.honest_eyes(), drive="student",
+                                        facing="search", seconds=0.5, ball=self.ball_round(0.19, 5.0))
+        self.assertEqual(outcome["looks"], 1)
+
+    def test_with_no_ball_it_looks_everywhere_and_attempts_nothing(self):
+        outcome, episode = dagger.run_attempt(self.sim, self.scene, random.Random(6), brain=self.honest_eyes(), drive="student",
+                                              facing="search", seconds=0.5, ball=self.ball_round(0.2, 0.0), ball_present=False)
+        from understudy import seek
+
+        self.assertFalse(outcome["found"])
+        self.assertEqual(outcome["looks"], len(seek.SCAN))
+        self.assertIsNone(episode)
+        pose = self.sim.calibration.to_rad(self.sim.read().positions[:5])
+        for angle, wanted in zip(pose, (seek.SCAN[-1], *seek.LOOK_POSE[1:])):
+            self.assertAlmostEqual(angle, wanted, delta=0.03)  # left raised where it last looked from
+
+    def test_a_ball_well_beyond_reach_is_never_attempted(self):
+        # Far enough out, the ball is not whole in any look, and is then simply not found.
+        outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(9), brain=self.honest_eyes(), drive="student",
+                                        facing="search", seconds=0.5, ball=self.ball_round(0.3, 10.0))
+        self.assertTrue(not outcome["found"] or outcome["refused"] == "too far")
+        self.assertAlmostEqual(float(self.sim.ball()[2]), pickup.BALL_RADIUS_M, delta=0.002)
+
+    def test_a_ball_too_near_or_too_far_is_found_and_refused(self):
+        for distance, word in ((0.12, "too near"), (0.255, "too far")):
+            outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(7), brain=self.honest_eyes(), drive="student",
+                                            facing="search", seconds=0.5, ball=self.ball_round(distance, 10.0))
+            with self.subTest(distance=distance):
+                self.assertTrue(outcome["found"])
+                self.assertEqual(outcome["refused"], word)
+                self.assertFalse(outcome["lifted"])
+                self.assertAlmostEqual(float(self.sim.ball()[2]), pickup.BALL_RADIUS_M, delta=0.002)  # not touched
+
+    def test_a_ball_further_round_than_the_arm_may_turn_is_refused(self):
+        outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(8), brain=self.honest_eyes(), drive="student",
+                                        facing="search", seconds=0.5, ball=self.ball_round(0.2, 75.0))
+        self.assertTrue(outcome["found"])  # the sweep looks further round than the arm may turn to face
+        self.assertEqual(outcome["refused"], "too far round")
 
     def test_single_pictures_come_with_the_ball_and_the_pose(self):
         views = dagger.random_views(self.sim, self.scene, random.Random(3), 24)
