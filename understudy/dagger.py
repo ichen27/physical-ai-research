@@ -451,7 +451,7 @@ def gather(job: dict) -> list[dict]:
     rng = random.Random(job["seed"])
     spool = Path(job["spool"])
     if job.get("views"):
-        np.savez(spool / f"views-{job['seed']}.npz", **random_views(sim, scene, rng, job["views"]))
+        _save_whole(spool / f"views-{job['seed']}.npz", random_views(sim, scene, rng, job["views"]))
         return []
     outcomes = []
     for number in range(job["attempts"]):
@@ -465,5 +465,17 @@ def gather(job: dict) -> list[dict]:
         outcome["faced_by"] = faces
         outcomes.append(outcome)
         if episode is not None and len(episode):
-            np.savez(spool / f"attempt-{job['seed']}-{number}.npz", **episode.arrays())
+            _save_whole(spool / f"attempt-{job['seed']}-{number}.npz", episode.arrays())
     return outcomes
+
+
+def _save_whole(path: Path, arrays: dict) -> None:
+    """Save under another name and rename when finished, so the trainer never opens half a file.
+
+    The trainer takes in whatever ``.npz`` files it finds whenever any worker finishes a job;
+    a file another worker was still writing once stopped a run a few minutes in.
+    """
+    part = path.with_suffix(".part")
+    with part.open("wb") as file:
+        np.savez(file, **arrays)
+    part.replace(path)

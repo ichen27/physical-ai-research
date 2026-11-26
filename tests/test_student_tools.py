@@ -208,6 +208,42 @@ class GatheringTests(unittest.TestCase):
         self.assertFalse(outcome["found"])
         self.assertIsNone(episode)
 
+    def test_a_gathering_job_leaves_only_finished_files_for_the_trainer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            job = {"seed": 77, "spool": folder, "teacher": str(POLICY), "student": None, "attempts": 1,
+                   "student_drives": 0.0, "student_faces": 0.0}
+            dagger._BENCH.clear()
+            dagger._BENCH.update(sim=self.sim, scene=self.scene, teacher=self.teacher, student_path=None, brain=None)
+            try:
+                outcomes = dagger.gather(job)
+                dagger.gather({**job, "seed": 78, "views": 8})
+            finally:
+                dagger._BENCH.clear()
+            names = sorted(path.name for path in Path(folder).iterdir())
+            self.assertEqual(names, ["attempt-77-0.npz", "views-78.npz"])  # nothing half written, nothing left over
+            self.assertEqual(outcomes[0]["driver"], "teacher")
+            with np.load(Path(folder) / "attempt-77-0.npz") as saved:
+                self.assertEqual(saved["pictures"].shape[1:], (72, 128, 3))
+                self.assertEqual(saved["guess"].shape[1], 2)
+
+    def test_a_half_written_file_is_never_seen_under_its_final_name(self):
+        seen = []
+        real_savez = np.savez
+
+        def watching(file, **arrays):
+            seen.append(sorted(p.name for p in Path(file.name).parent.glob("*.npz")))
+            return real_savez(file, **arrays)
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "attempt-1-0.npz"
+            np.savez, kept = watching, np.savez
+            try:
+                dagger._save_whole(target, {"pictures": np.zeros((3, 72, 128, 3), np.uint8)})
+            finally:
+                np.savez = kept
+            self.assertEqual(seen, [[]])  # while it was being written, no .npz file was there to be opened
+            self.assertTrue(target.exists())
+
     def test_single_pictures_come_with_the_ball_and_the_pose(self):
         views = dagger.random_views(self.sim, self.scene, random.Random(3), 24)
         self.assertEqual(views["pictures"].shape, (24, 72, 128, 3))
