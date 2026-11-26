@@ -154,8 +154,11 @@ class Scene:
     moves the true camera a little about it.
     """
 
-    def __init__(self, sim: MujocoArm, nominal: WristCamera, held_out: bool = False):
+    def __init__(self, sim: MujocoArm, nominal: WristCamera, held_out: bool = False, camera_spread: float = 1.0):
         self.sim, self.nominal, self.held_out = sim, nominal, held_out
+        # How many times further than usual the true camera strays from the nominal one: to measure
+        # what a camera calibration that is more wrong than expected costs.
+        self.camera_spread = camera_spread
         model = sim.model
         self._width, self._height = PICTURE_WIDTH * _RENDER_SCALE, PICTURE_HEIGHT * _RENDER_SCALE
         self._renderer = mujoco.Renderer(model, height=self._height, width=self._width)
@@ -197,14 +200,14 @@ class Scene:
         self._noise = np.random.default_rng(rng.getrandbits(32))
 
         # The camera: a little off its nominal mount, with a lens a little off the nominal one.
-        nominal = self.nominal
-        xyz = tuple(v + rng.uniform(-MOUNT_SHIFT_M, MOUNT_SHIFT_M) for v in nominal.mount_xyz)
+        nominal, wide = self.nominal, self.camera_spread
+        xyz = tuple(v + wide * rng.uniform(-MOUNT_SHIFT_M, MOUNT_SHIFT_M) for v in nominal.mount_xyz)
         axis = np.array([rng.gauss(0, 1) for _ in range(3)])
-        wobble = rotation_from_vector(axis / np.linalg.norm(axis) * rng.uniform(0, MOUNT_TURN_RAD))
+        wobble = rotation_from_vector(axis / np.linalg.norm(axis) * wide * rng.uniform(0, MOUNT_TURN_RAD))
         rotation = vector_from_rotation(wobble @ rotation_from_vector(nominal.mount_rotation))
         camera = replace(
             nominal,
-            focal_px=nominal.focal_px * (1 + rng.uniform(-FOCAL_SPREAD, FOCAL_SPREAD)),
+            focal_px=nominal.focal_px * (1 + wide * rng.uniform(-FOCAL_SPREAD, FOCAL_SPREAD)),
             centre_px=(nominal.centre_px[0] + rng.uniform(-CENTRE_SPREAD, CENTRE_SPREAD) * nominal.width,
                        nominal.centre_px[1] + rng.uniform(-CENTRE_SPREAD, CENTRE_SPREAD) * nominal.width),
             distortion=rng.uniform(*DISTORTION_RANGE),

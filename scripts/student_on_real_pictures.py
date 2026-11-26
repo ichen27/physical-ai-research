@@ -35,6 +35,8 @@ import numpy as np  # noqa: E402
 
 from understudy import arm, camera_calibration, pickup, runtime, sim_look, student, vision  # noqa: E402
 
+from understudy.runner import SWIVEL_AXIS_X_M  # noqa: E402
+
 DEFAULT_HOLD_TARGET = (0.19, 0.0, 0.13)
 
 
@@ -118,7 +120,9 @@ def describe_pictures(brain: student.Brain, args) -> dict:
     for name in args.pictures:
         picture = sim_look.shrink(vision.decode(Path(name).expanduser().read_bytes()))
         (x, y, z), sure = brain.glance(picture, readings_for(angles, args.finger))
-        rows.append({"picture": Path(name).name, "student_says": [round(x, 4), round(y, 4), round(z, 4)], "in_view": round(sure, 3)})
+        rows.append({"picture": Path(name).name, "student_says": [round(x, 4), round(y, 4), round(z, 4)], "in_view": round(sure, 3),
+                     # From the swivel axis, which is what a ruler on the desk measures. A turn of the swivel does not change it.
+                     "cm_from_swivel_axis": round(100 * math.hypot(x - SWIVEL_AXIS_X_M, y), 2)})
     return {"known_ball_positions": "none: these pictures only show what the student says",
             "joint_angles_assumed_rad": angles, "pictures": rows}
 

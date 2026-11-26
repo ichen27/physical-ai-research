@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import sys
 import time
@@ -54,6 +55,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--rows", nargs="+", default=list(ROWS), choices=list(ROWS))
     parser.add_argument("--seen_looks", action="store_true", help="Use the desk patterns the student was trained on.")
+    parser.add_argument("--camera_spread", type=float, default=1.0,
+                        help="How many times further than in training the true camera strays from the one the student "
+                        "was trained for (in training: 3 mm, 1.5 degrees, 4%% of focal length).")
+    parser.add_argument("--tag", default="", help="Added to the output files' names, to keep runs apart.")
     parser.add_argument("--output-dir", help="Write one JSON file per row here.")
     args = parser.parse_args()
 
@@ -66,6 +71,7 @@ def main() -> None:
                              for key, value in notes["nominal_camera"].items()}) if "nominal_camera" in notes else None
     sim, scene = dagger.bench(nominal)
     scene.held_out = not args.seen_looks
+    scene.camera_spread = args.camera_spread
     for name in args.rows:
         row = dict(ROWS[name])
         use_teacher, use_brain = row.pop("teacher", True), row.pop("brain", True)
@@ -90,6 +96,11 @@ def main() -> None:
                      f"held out: new draws, and desk patterns {list(sim_look.HELD_OUT_PATTERNS)} never used in training",
             "ball_distance_from_swivel_axis_m": list(REACH_BAND_M),
             "ball_within_rad_of_straight_ahead": dagger.AHEAD_TURN_RAD,
+            "true_camera_strays_from_nominal_by_up_to": {
+                "mount_mm": 1000 * sim_look.MOUNT_SHIFT_M * args.camera_spread,
+                "direction_deg": round(math.degrees(sim_look.MOUNT_TURN_RAD) * args.camera_spread, 2),
+                "focal_percent": 100 * sim_look.FOCAL_SPREAD * args.camera_spread,
+            },
             "seconds": pickup.EPISODE_SECONDS * 3,
             "max_speed_rad_s": student.SPEED_LIMIT_RAD_S,
             "max_lead_rad": student.LEAD_LIMIT_RAD,
@@ -111,7 +122,7 @@ def main() -> None:
         text = json.dumps(result, indent=2)
         if args.output_dir:
             Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-            (Path(args.output_dir) / f"mujoco-{name}.json").write_text(text + "\n")
+            (Path(args.output_dir) / f"mujoco-{name}{args.tag}.json").write_text(text + "\n")
         print(json.dumps({k: result[k] for k in ("row", "ball_found_rate", "lifted_rate", "lifted_at_some_point_rate",
                                                   "safety_stop_rate", "facing_guess_error_mm", "minutes")}), flush=True)
     scene.close()
