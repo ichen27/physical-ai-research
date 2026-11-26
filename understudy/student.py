@@ -1,0 +1,184 @@
+"""A pickup policy that sees the wrist camera's picture instead of being told where the ball is.
+
+The *teacher* is the trained pickup policy, which is given the ball's position.
+The *student* is given the camera's picture and the same joint readings, and
+learns to do what the teacher would do. It never receives the ball's position.
+
+What the student puts out each control step:
+
+- how far to move each of the five arm joints' targets, as a share of the most
+  the real arm's speed limit allows in one step (-1 to 1);
+- whether the gripper should be open;
+- where it thinks the ball is, twice: from this picture alone (with whether the
+  ball is in the picture at all), and from everything it has seen so far.
+
+The teacher's own outputs are not copied as they are. With the speed limits the
+real arm runs under, most of them are far beyond what the limit lets through
+(a typical wrist output asks for a hundred times the allowed step), so only
+their limited effect carries meaning. The student learns that.
+
+**Memory.** Between the picture and its outputs the student keeps a small
+running state (a GRU). In simulation the ball stays at least half in view all
+the way through a pickup, so memory is rarely needed there; it is there for the
+real camera, where glare or the fingers may hide the ball for a moment. So that
+the memory is actually learnt, training blanks the picture for stretches at
+random, and the test in ``scripts/evaluate_student.py`` does the same.
+
+Needs ``torch`` and ``numpy``. Pictures are blue-green-red bytes at
+``understudy.sim_look.PICTURE_WIDTH`` by ``PICTURE_HEIGHT``.
+"""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from typing import Sequence
+
+import numpy as np
+import torch
+from torch import nn
+
+from . import arm
+from .sim_look import PICTURE_HEIGHT, PICTURE_WIDTH
+
+PROPRIO_SIZE = 20
+# The joint readings the student gets, taken from the teacher's 33 inputs: joint angles relative
+# to the start pose (6), joint speeds (6), the hold target (3), and how far each arm joint's target
+# leads the joint (5). Left out: the ball's position (3), a constant (4) and the previous output (6).
+_FROM_OBSERVATION = (*range(0, 12), *range(15, 18), *range(28, 33))
+_PROPRIO_SCALE = np.array([1.0] * 6 + [2.0] * 6 + [5.0] * 3 + [20.0] * 5, dtype=np.float32)
+BALL_SCALE = 10.0  # the network works in tenths of a metre
+SPEED_LIMIT_RAD_S = 0.3  # the limit the student's arm outputs are a share of
+LEAD_LIMIT_RAD = 0.05
+_STEP_RAD = SPEED_LIMIT_RAD_S / arm.CONTROL_HZ
+
+
+def proprio_from_observation(observation: Sequence[float]) -> np.ndarray:
+    """The student's joint readings from the teacher's 33 inputs. The ball's position is not among them."""
+    if len(observation) != 33:
+        raise ValueError(f"the teacher's observation has 33 numbers, got {len(observation)}")
+    return np.asarray([observation[i] for i in _FROM_OBSERVATION], dtype=np.float32)
+
+
+def moves_from_teacher(action: Sequence[float], scale: float) -> tuple[np.ndarray, bool]:
+    """What a teacher's raw output comes to under the speed limit: each arm target's move as a
+    share of the allowed step, and whether the gripper is open. ``scale`` is the policy's action scale."""
+    moves = np.clip(np.asarray(action[:5], dtype=np.float32) * scale / _STEP_RAD, -1.0, 1.0)
+    return moves, bool(action[5] >= 0.0)
+
+
+def action_from_moves(moves: Sequence[float], gripper_open: bool, scale: float) -> list[float]:
+    """A raw output, in the teacher's terms, that produces these moves under the speed limit."""
+    return [float(np.clip(m, -1.0, 1.0)) * _STEP_RAD / scale for m in moves] + [1.0 if gripper_open else -1.0]
+
+
+class StudentNet(nn.Module):
+    """Picture and joint readings in; arm moves, gripper and ball estimates out."""
+
+    def __init__(self, width: int = 128):
+        super().__init__()
+        self.width = width
+        self.eye = nn.Sequential(
+            nn.Conv2d(3, 24, 5, stride=2, padding=2), nn.ReLU(),
+            nn.Conv2d(24, 32, 3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 48, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(48, 64, 3, padding=1),
+        )
+        rows, columns = math.ceil(PICTURE_HEIGHT / 4), math.ceil(PICTURE_WIDTH / 4)
+        grid_v, grid_u = torch.meshgrid(torch.linspace(-1, 1, rows), torch.linspace(-1, 1, columns), indexing="ij")
+        self.register_buffer("grid_u", grid_u.reshape(-1), persistent=False)
+        self.register_buffer("grid_v", grid_v.reshape(-1), persistent=False)
+        self.register_buffer("proprio_scale", torch.from_numpy(_PROPRIO_SCALE), persistent=False)
+        self.fuse = nn.Sequential(nn.Linear(64 * 3 + PROPRIO_SIZE, width), nn.ReLU(), nn.Linear(width, width), nn.ReLU())
+        self.seen = nn.Linear(width, 4)  # the ball from this picture alone: x, y, z, and whether it is in view
+        self.memory = nn.GRU(width, width, batch_first=True)
+        self.act = nn.Sequential(nn.Linear(2 * width, width), nn.ReLU(), nn.Linear(width, 9))  # 5 moves, gripper, ball x y z
+
+    def look(self, pictures: torch.Tensor, proprio: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """What one picture and one set of joint readings say, without memory.
+
+        ``pictures`` is N x 3 x height x width, bytes or floats 0 to 255; ``proprio`` N x 20.
+        Returns the features passed on to the memory and the ball seen (N x 4: x, y, z in
+        metres, then how sure it is that the ball is in view, before the sigmoid).
+        """
+        features = self.eye(pictures.float() / 255.0 - 0.5)
+        flat = features.flatten(2)
+        # Where each feature fires in the picture: a soft arg-max, which suits "where is the ball".
+        weights = torch.softmax(flat, dim=2)
+        where = torch.cat([(weights * self.grid_u).sum(2), (weights * self.grid_v).sum(2), flat.mean(2)], dim=1)
+        fused = self.fuse(torch.cat([where, proprio * self.proprio_scale], dim=1))
+        seen = self.seen(fused)
+        return fused, torch.cat([seen[:, :3] / BALL_SCALE, seen[:, 3:]], dim=1)
+
+    def forward(self, pictures: torch.Tensor, proprio: torch.Tensor, state: torch.Tensor | None = None) -> dict:
+        """A run of steps. ``pictures`` is B x T x 3 x height x width, ``proprio`` B x T x 20.
+
+        Returns ``moves`` (B x T x 5, -1 to 1), ``open`` (B x T, before the sigmoid), ``ball``
+        (B x T x 3, metres, from memory), ``seen`` (B x T x 4, from each picture alone) and ``state``.
+        """
+        batch, steps = pictures.shape[:2]
+        fused, seen = self.look(pictures.flatten(0, 1), proprio.flatten(0, 1))
+        fused = fused.view(batch, steps, -1)
+        remembered, state = self.memory(fused, state)
+        out = self.act(torch.cat([remembered, fused], dim=2))
+        return {
+            "moves": torch.tanh(out[..., :5]),
+            "open": out[..., 5],
+            "ball": out[..., 6:9] / BALL_SCALE,
+            "seen": seen.view(batch, steps, 4),
+            "state": state,
+        }
+
+
+def save(net: StudentNet, path: str | Path, **notes) -> None:
+    torch.save({"width": net.width, "weights": net.state_dict(), "notes": notes}, str(path))
+
+
+def load(path: str | Path) -> tuple[StudentNet, dict]:
+    saved = torch.load(str(path), map_location="cpu", weights_only=True)
+    net = StudentNet(saved["width"])
+    net.load_state_dict(saved["weights"])
+    return net.eval(), saved.get("notes", {})
+
+
+class Brain:
+    """The student, one control step at a time, on the processor. Keeps its memory between steps."""
+
+    def __init__(self, net: StudentNet):
+        self.net = net.eval()
+        self._state = None
+
+    def reset(self) -> None:
+        """Forget everything: call at the start of each attempt."""
+        self._state = None
+
+    @staticmethod
+    def _tensors(picture: np.ndarray, proprio: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+        if picture.shape != (PICTURE_HEIGHT, PICTURE_WIDTH, 3):
+            raise ValueError(f"a {PICTURE_WIDTH} x {PICTURE_HEIGHT} colour picture is needed, got {picture.shape}")
+        image = torch.from_numpy(np.ascontiguousarray(picture)).permute(2, 0, 1)
+        return image, torch.from_numpy(np.asarray(proprio, dtype=np.float32))
+
+    @torch.no_grad()
+    def glance(self, picture: np.ndarray, proprio: np.ndarray) -> tuple[tuple[float, float, float], float]:
+        """Where the ball is from this one picture, and how sure the student is that it is in view (0 to 1).
+        Does not touch the memory."""
+        image, readings = self._tensors(picture, proprio)
+        _, seen = self.net.look(image[None], readings[None])
+        x, y, z, sure = (float(v) for v in seen[0])
+        return (x, y, z), 1.0 / (1.0 + math.exp(-sure))
+
+    @torch.no_grad()
+    def step(self, picture: np.ndarray, proprio: np.ndarray) -> dict:
+        """One control step: ``moves`` (5), ``open``, ``ball`` (from memory), ``seen`` and ``in_view``."""
+        image, readings = self._tensors(picture, proprio)
+        out = self.net(image[None, None], readings[None, None], self._state)
+        self._state = out["state"]
+        seen = out["seen"][0, 0]
+        return {
+            "moves": out["moves"][0, 0].numpy(),
+            "open": bool(out["open"][0, 0] >= 0.0),
+            "ball": tuple(float(v) for v in out["ball"][0, 0]),
+            "seen": tuple(float(v) for v in seen[:3]),
+            "in_view": 1.0 / (1.0 + math.exp(-float(seen[3]))),
+        }

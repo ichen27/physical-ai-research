@@ -51,6 +51,7 @@ def build_model(
     stiffness_scale: float = 1.0,
     claw_fingers: bool = True,
     wrist_camera=None,
+    extras=None,
 ) -> mujoco.MjModel:
     """The vendor arm on a desk with a ball. ``stiffness_scale`` multiplies the arm servo gains.
 
@@ -62,6 +63,9 @@ def build_model(
     ``wrist`` on the gripper, for ``RenderedCamera``. MuJoCo's camera has no lens
     distortion and looks through the middle of its picture, so only the size, focal
     length and mount of the one given are used.
+
+    ``extras`` is called with the model's description just before it is compiled, to add
+    things to the scene (``understudy.sim_look.dress`` adds what varied pictures need).
     """
     if stiffness_scale <= 0:
         raise ValueError("stiffness_scale must be positive")
@@ -104,6 +108,8 @@ def build_model(
             geom.rgba[3] = 0.0  # the vendor model marks the gripper tip with a red box that no real arm has
         spec.visual.global_.offwidth = max(spec.visual.global_.offwidth, wrist_camera.width)
         spec.visual.global_.offheight = max(spec.visual.global_.offheight, wrist_camera.height)
+    if extras is not None:
+        extras(spec)
     model = spec.compile()
     for joint in arm.ARM_JOINTS:
         index = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, joint.name)
