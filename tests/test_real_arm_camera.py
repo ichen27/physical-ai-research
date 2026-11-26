@@ -143,7 +143,7 @@ class ToolWithCameraTests(unittest.TestCase):
         bench.on_picture = None
         cls.collect_silence_s = bench.robot.longest_silence_s
         cls.collect_silence_at = bench.robot.longest_silence_at
-        cls.fit_output = bench.run(cls.tool, cls.tool.cmd_camera_fit, max_error_mm=8.0)
+        cls.fit_output = bench.run(cls.tool, cls.tool.cmd_camera_fit, max_error_mm=8.0, known=None)
 
     @classmethod
     def tearDownClass(cls):
@@ -170,6 +170,27 @@ class ToolWithCameraTests(unittest.TestCase):
         notes = json.loads((self.bench.folder / "camera.json").read_text())
         self.assertLess(notes["desk_rms_mm"], 1.5)
         self.assertEqual(notes["places"], 2)
+
+    def test_the_fit_can_be_told_where_the_ball_was(self):
+        # The simulated arm's zeros are right, so telling the fit where the ball was changes little,
+        # and it says how far the pictures alone were from what it was told.
+        other = self.bench.folder / "camera-known.json"
+        out = self.bench.run(self.tool, self.tool.cmd_camera_fit, max_error_mm=8.0, camera_file=str(other),
+                             known=[[1.0, 0.21, 0.01], [2.0, 0.19, 0.06]])
+        self.assertIn("place 1: ball known to be x=0.210 y=0.010", out, out)
+        self.assertIn("place 2: ball known to be x=0.190 y=0.060", out)
+        self.assertRegex(out, r"the pictures alone would have put it at x=0\.2\d\d y=0\.0\d\d, [0-3] mm away")
+        self.assertNotIn("No place's position was given", out)
+        notes = json.loads(other.read_text())
+        self.assertEqual(notes["known_places"], {"1": [0.21, 0.01], "2": [0.19, 0.06]})
+        self.assertLess(notes["desk_rms_mm"], 2.5)
+        self.assertIn("No place's position was given", self.fit_output)  # and without it, the fit says what that costs
+
+    def test_a_known_place_that_does_not_exist_is_refused(self):
+        out = self.bench.run(self.tool, self.tool.cmd_camera_fit, max_error_mm=8.0,
+                             camera_file=str(self.bench.folder / "never.json"), known=[[3.0, 0.2, 0.0]])
+        self.assertIn("the places are numbered 1 to 2", out)
+        self.assertFalse((self.bench.folder / "never.json").exists())
 
     def run_pickup(self, ball, **extra):
         self.bench.rest(ball)

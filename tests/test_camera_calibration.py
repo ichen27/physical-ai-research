@@ -116,6 +116,76 @@ class FitTests(unittest.TestCase):
         self.assertGreater(fit.pixel_rms, 20)
 
 
+class KnownPlaceTests(unittest.TestCase):
+    """An arm whose joint zeros are not quite what its calibration says, as the first real arm's were."""
+
+    # Where the joints really are: the wrist's zero is 4 degrees from what the arm's calibration
+    # says. Touches of the desk at a few distances barely tell that apart from a true one.
+    WRONG = dataclasses.replace(ODD, zero_ticks=tuple(
+        zero + sign * math.radians(degrees) / arm.RAD_PER_TICK
+        for zero, sign, degrees in zip(ODD.zero_ticks, ODD.signs, (0.0, 0.0, 0.0, 4.0, 0.0))))
+    PLACES = ((0.16, 0.0), (0.19, 0.05))
+
+    def seen_through_the_real_arm(self, rng, ball, count, place=0):
+        """Sightings recorded as the arm reports them, taken from where the arm really is."""
+        out = []
+        while len(out) < count:
+            pose = [p + rng.uniform(-r, r) for p, r in zip(pickup.START_POSE, (0.35, 0.25, 0.25, 0.25, 0.4))]
+            if CHAIN.tip_position(pose)[2] < 0.085:
+                continue
+            ticks = tuple(ODD.to_ticks(pose))
+            sight = TRUE.sight((*ball, pickup.BALL_RADIUS_M), self.WRONG.to_rad(ticks), CHAIN)
+            if sight is not None and sight.inside:
+                out.append(Sighting(ticks, sight.u + rng.gauss(0, 1), sight.v + rng.gauss(0, 1), sight.radius_px, place))
+        return out
+
+    def error_on_new_balls(self, camera, rng):
+        errors = []
+        for ball in ((0.15, 0.03), (0.2, -0.04), (0.22, 0.02), (0.18, 0.07)):
+            for s in self.seen_through_the_real_arm(rng, ball, 3):
+                where = camera.locate(s.u, s.v, ODD.to_rad(s.ticks), CHAIN)
+                errors.append(math.dist(where[:2], ball))
+        return sorted(errors)[len(errors) // 2]
+
+    def setUp(self):
+        self.rng = random.Random(12)
+        self.seen = [s for place, ball in enumerate(self.PLACES) for s in self.seen_through_the_real_arm(self.rng, ball, 12, place)]
+
+    def test_without_a_known_place_the_fit_agrees_with_itself_and_is_wrong(self):
+        fit = camera_calibration.fit(self.seen, ODD, lens=False)
+        self.assertLess(fit.desk_rms_m, 0.003)  # nothing in the fit's own error gives it away
+        self.assertGreater(math.dist(fit.places[0], self.PLACES[0]), 0.008)
+        self.assertGreater(self.error_on_new_balls(fit.camera, self.rng), 0.008)
+
+    def test_known_places_tie_the_camera_to_where_the_ball_really_is(self):
+        plain = self.error_on_new_balls(camera_calibration.fit(self.seen, ODD, lens=False).camera, random.Random(1))
+        one = camera_calibration.fit(self.seen, ODD, lens=False, known={0: self.PLACES[0]})
+        both = camera_calibration.fit(self.seen, ODD, lens=False, known=dict(enumerate(self.PLACES)))
+        self.assertEqual(both.places, tuple(self.PLACES))
+        self.assertEqual(one.places[0], self.PLACES[0])
+        self.assertLess(math.dist(one.places[1], self.PLACES[1]), 0.004)  # the place not told is now found near where it was
+        # A wrong joint zero is not something a camera's mount can take up exactly: what is left
+        # depends on the pose. Over poses all round the start pose it is under half of what it was
+        # (about 12 mm down to about 5); from the start pose itself it is smaller still.
+        for fit in (one, both):
+            error = self.error_on_new_balls(fit.camera, random.Random(1))
+            self.assertLess(error, 0.0065)
+            self.assertLess(error, 0.55 * plain)
+
+    def test_on_an_arm_that_is_right_knowing_a_place_changes_little(self):
+        rng = random.Random(13)
+        seen = sightings(rng, (0.21, 0.0), 10, 0) + sightings(rng, (0.19, 0.07), 10, 1)
+        plain = camera_calibration.fit(seen, ODD)
+        told = camera_calibration.fit(seen, ODD, known={0: (0.21, 0.0), 1: (0.19, 0.07)})
+        self.assertLess(math.dist(plain.camera.mount_xyz, told.camera.mount_xyz), 0.004)
+        self.assertLess(told.desk_rms_m, 0.003)
+
+    def test_a_known_place_with_no_sightings_is_refused(self):
+        with self.assertRaises(ValueError) as raised:
+            camera_calibration.fit(self.seen, ODD, known={5: (0.2, 0.0)})
+        self.assertIn("known place", str(raised.exception))
+
+
 class SpreadTests(unittest.TestCase):
     def test_the_true_camera_agrees_with_itself(self):
         rng = random.Random(9)

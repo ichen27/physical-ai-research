@@ -25,7 +25,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -168,12 +168,26 @@ def fit(
     lens: bool | None = None,
     start: WristCamera | None = None,
     tick: Callable[[], object] | None = None,
+    known: Mapping[int, Sequence[float]] | None = None,
 ) -> Fit:
     """The camera that best explains the sightings.
 
     ``lens`` says whether to fit the picture's centre and the lens distortion as well as
     the focal length and the mount. Left as None it is decided by how much there is to
     go on. ``start`` is a camera to try first, such as the last fit.
+
+    ``known`` gives, for some of the resting places (by their number in the sightings),
+    where the ball was: x, y in metres in the arm's frame, found some other way, such as
+    by resting the gripper tip on the spot before the ball was put there. Those places are
+    held where they are said to be and only the camera is fitted to them.
+
+    This matters more than it looks. With no place known, the answer is in the arm model's
+    frame *with the arm raised*, and that is only as true as the arm's joint zeros. On the
+    first real arm the zeros came from four touches of the desk, which leave the wrist's
+    zero free by several degrees; the fitted camera agreed with itself to 2 mm over three
+    resting places and still put a ball 1 cm nearer than a ruler did. A known place ties
+    the camera to where the gripper is when it is down at the desk, which is what a pickup
+    needs, and takes that error into the camera's mount.
 
     A fit takes about half a second. ``tick`` is called thousands of times while it runs,
     so that a caller holding a powered arm can keep talking to its servos (see
@@ -184,6 +198,11 @@ def fit(
         raise ValueError(f"{MIN_SIGHTINGS} or more sightings are needed; {len(sightings)} given")
     place_numbers = sorted({s.place for s in sightings})
     place_of = np.array([place_numbers.index(s.place) for s in sightings])
+    known = {int(number): (float(xy[0]), float(xy[1])) for number, xy in (known or {}).items()}
+    strangers = sorted(set(known) - set(place_numbers))
+    if strangers:
+        raise ValueError(f"no sightings were taken at the known place(s) {strangers}; the places are {place_numbers}")
+    free = [index for index, number in enumerate(place_numbers) if number not in known]  # places still to be found
     if lens is None:
         lens = len(sightings) >= MIN_SIGHTINGS_FOR_LENS and len(place_numbers) >= 2
     chain = chain or Chain()
@@ -194,10 +213,14 @@ def fit(
     count = len(sightings)
 
     # Unknowns: focal length (as a multiple of the picture's width), mount position, mount
-    # rotation, then two per resting place, then, if asked for, the picture centre and distortion.
+    # rotation, then two per resting place not already known, then, if asked for, the picture
+    # centre and distortion.
+    held = np.array([known.get(number, (0.0, 0.0)) for number in place_numbers], dtype=float).reshape(-1, 2)
+
     def unpack(x: np.ndarray):
-        places = x[7 : 7 + 2 * len(place_numbers)].reshape(-1, 2)
-        if len(x) > 7 + 2 * len(place_numbers):
+        places = held.copy()
+        places[free] = x[7 : 7 + 2 * len(free)].reshape(-1, 2)
+        if len(x) > 7 + 2 * len(free):
             cx, cy, distortion = x[-3] * width, x[-2] * width, x[-1]
         else:
             cx, cy, distortion = centre[0], centre[1], 0.0
@@ -218,7 +241,7 @@ def fit(
     def vector(camera: WristCamera, with_lens: bool) -> np.ndarray | None:
         points = located(camera, sightings, calibration, chain)
         places = []
-        for index in range(len(place_numbers)):
+        for index in free:
             here = [p for p, which in zip(points, place_of) if which == index and p is not None]
             if not here:
                 return None
