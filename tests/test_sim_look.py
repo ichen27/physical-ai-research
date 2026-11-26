@@ -73,8 +73,8 @@ class SceneTests(unittest.TestCase):
         self.assertLess(model.vis.map.znear * model.stat.extent, 0.03)
 
     def test_a_picture_is_the_students_size_and_shows_the_ball(self):
-        self.sim.reset((0.21, 0.02))
-        self.scene.new_look(random.Random(3), (0.21, 0.02))
+        self.sim.reset((0.16, 0.02))  # the middle of the picture from the start pose
+        self.scene.new_look(random.Random(3), (0.16, 0.02))
         picture, visible = self.scene.picture_now()
         self.assertEqual(picture.shape, (sim_look.PICTURE_HEIGHT, sim_look.PICTURE_WIDTH, 3))
         self.assertEqual(picture.dtype, np.uint8)
@@ -138,11 +138,11 @@ class SceneTests(unittest.TestCase):
         self.assertTrue(held <= set(sim_look.HELD_OUT_PATTERNS))
 
     def test_late_pictures_arrive_the_looks_number_of_steps_late(self):
-        self.sim.reset((0.2, 0.0))
+        self.sim.reset((0.16, 0.02))
         rng = random.Random(8)
-        look = self.scene.new_look(rng, (0.2, 0.0))
+        look = self.scene.new_look(rng, (0.16, 0.02))
         while look.latency_steps != 2:
-            look = self.scene.new_look(rng, (0.2, 0.0))
+            look = self.scene.new_look(rng, (0.16, 0.02))
         first = self.scene.picture()[1]
         self.sim.place_ball((0.2, 0.4))  # the ball is taken away
         still_there = [self.scene.picture()[1] for _ in range(2)]

@@ -17,12 +17,20 @@ real arm runs under, most of them are far beyond what the limit lets through
 (a typical wrist output asks for a hundred times the allowed step), so only
 their limited effect carries meaning. The student learns that.
 
-**Memory.** Between the picture and its outputs the student keeps a small
-running state (a GRU). In simulation the ball stays at least half in view all
-the way through a pickup, so memory is rarely needed there; it is there for the
-real camera, where glare or the fingers may hide the ball for a moment. So that
-the memory is actually learnt, training blanks the picture for stretches at
-random, and the test in ``scripts/evaluate_student.py`` does the same.
+**When the ball is not in the picture.** The real camera's lens is narrow and
+from the start pose it looks almost straight down: about half the places a
+ball can be are cut off or out of the picture when an attempt starts, and come
+into it only as the gripper moves out over them. Two things cover that.
+
+- Before the attempt the arm looks from a raised pose that shows everywhere a
+  ball can be (``understudy.dagger.LOOK_POSE``), and the student says where the
+  ball is from that one picture. That first guess is used to turn the arm to
+  face the ball, and is then given back to the student on every step. It is the
+  student's own reading of its own picture, not the ball's true position.
+- Between the picture and its outputs the student keeps a small running state
+  (a GRU), so that what it has seen stays with it when glare or the fingers
+  hide the ball. So that this is actually learnt, training blanks the picture
+  for stretches at random, and ``scripts/evaluate_student.py`` tests the same.
 
 Needs ``torch`` and ``numpy``. Pictures are blue-green-red bytes at
 ``understudy.sim_look.PICTURE_WIDTH`` by ``PICTURE_HEIGHT``.
@@ -42,6 +50,7 @@ from . import arm
 from .sim_look import PICTURE_HEIGHT, PICTURE_WIDTH
 
 PROPRIO_SIZE = 20
+GUESS_SIZE = 2
 # The joint readings the student gets, taken from the teacher's 33 inputs: joint angles relative
 # to the start pose (6), joint speeds (6), the hold target (3), and how far each arm joint's target
 # leads the joint (5). Left out: the ball's position (3), a constant (4) and the previous output (6).
@@ -91,8 +100,9 @@ class StudentNet(nn.Module):
         self.register_buffer("proprio_scale", torch.from_numpy(_PROPRIO_SCALE), persistent=False)
         self.fuse = nn.Sequential(nn.Linear(64 * 3 + PROPRIO_SIZE, width), nn.ReLU(), nn.Linear(width, width), nn.ReLU())
         self.seen = nn.Linear(width, 4)  # the ball from this picture alone: x, y, z, and whether it is in view
-        self.memory = nn.GRU(width, width, batch_first=True)
-        self.act = nn.Sequential(nn.Linear(2 * width, width), nn.ReLU(), nn.Linear(width, 9))  # 5 moves, gripper, ball x y z
+        # The first guess joins after "seen" is read off, so that what one picture says can never lean on it.
+        self.memory = nn.GRU(width + GUESS_SIZE, width, batch_first=True)
+        self.act = nn.Sequential(nn.Linear(2 * width + GUESS_SIZE, width), nn.ReLU(), nn.Linear(width, 9))  # 5 moves, gripper, ball x y z
 
     def look(self, pictures: torch.Tensor, proprio: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """What one picture and one set of joint readings say, without memory.
@@ -110,15 +120,17 @@ class StudentNet(nn.Module):
         seen = self.seen(fused)
         return fused, torch.cat([seen[:, :3] / BALL_SCALE, seen[:, 3:]], dim=1)
 
-    def forward(self, pictures: torch.Tensor, proprio: torch.Tensor, state: torch.Tensor | None = None) -> dict:
-        """A run of steps. ``pictures`` is B x T x 3 x height x width, ``proprio`` B x T x 20.
+    def forward(self, pictures: torch.Tensor, proprio: torch.Tensor, guess: torch.Tensor,
+                state: torch.Tensor | None = None) -> dict:
+        """A run of steps. ``pictures`` is B x T x 3 x height x width, ``proprio`` B x T x 20, and
+        ``guess`` B x T x 2: where the student said the ball was before the attempt (x, y, metres).
 
         Returns ``moves`` (B x T x 5, -1 to 1), ``open`` (B x T, before the sigmoid), ``ball``
         (B x T x 3, metres, from memory), ``seen`` (B x T x 4, from each picture alone) and ``state``.
         """
         batch, steps = pictures.shape[:2]
         fused, seen = self.look(pictures.flatten(0, 1), proprio.flatten(0, 1))
-        fused = fused.view(batch, steps, -1)
+        fused = torch.cat([fused.view(batch, steps, -1), guess * BALL_SCALE], dim=2)
         remembered, state = self.memory(fused, state)
         out = self.act(torch.cat([remembered, fused], dim=2))
         return {
@@ -169,10 +181,13 @@ class Brain:
         return (x, y, z), 1.0 / (1.0 + math.exp(-sure))
 
     @torch.no_grad()
-    def step(self, picture: np.ndarray, proprio: np.ndarray) -> dict:
-        """One control step: ``moves`` (5), ``open``, ``ball`` (from memory), ``seen`` and ``in_view``."""
+    def step(self, picture: np.ndarray, proprio: np.ndarray, guess: Sequence[float]) -> dict:
+        """One control step: ``moves`` (5), ``open``, ``ball`` (from memory), ``seen`` and ``in_view``.
+
+        ``guess`` is where the student said the ball was before the attempt (x, y, metres)."""
         image, readings = self._tensors(picture, proprio)
-        out = self.net(image[None, None], readings[None, None], self._state)
+        first = torch.tensor([[[float(guess[0]), float(guess[1])]]], dtype=torch.float32)
+        out = self.net(image[None, None], readings[None, None], first, self._state)
         self._state = out["state"]
         seen = out["seen"][0, 0]
         return {

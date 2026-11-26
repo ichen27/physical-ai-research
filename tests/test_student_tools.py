@@ -150,7 +150,7 @@ class GatheringTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.scene.close()
 
-    def test_the_teacher_lifts_the_ball_and_every_step_is_recorded_with_the_ball_in_the_picture(self):
+    def test_the_teacher_lifts_the_ball_and_every_step_is_recorded(self):
         rng = random.Random(0)
         lifted = 0
         for _ in range(3):
@@ -162,15 +162,32 @@ class GatheringTests(unittest.TestCase):
             self.assertEqual(arrays["pictures"].shape, (steps, 72, 128, 3))
             self.assertEqual(arrays["proprio"].shape, (steps, student.PROPRIO_SIZE))
             self.assertTrue(bool((np.abs(arrays["moves"]) <= 1.0).all()))
-            # No blank frames, and the ball in view nearly throughout: a camera that lost the desk
-            # as the gripper came down once passed every other check.
+            # No blank frames: a camera that lost the desk as the gripper came down once passed every other check.
             self.assertGreater(float(arrays["pictures"].reshape(steps, -1).std(axis=1).min()), 2.0)
-            self.assertGreater(float((arrays["visible"] >= dagger.IN_VIEW).mean()), 0.9)
-            # In the turned frame the ball starts about 3 cm left of straight ahead, on the desk.
+            # With this camera the ball is in the picture while the gripper comes down on it, and
+            # mostly out of it once it is held.
+            reaching = arrays["open"] > 0.5
+            self.assertGreater(float((arrays["visible"][reaching] >= dagger.IN_VIEW).mean()), 0.8)
+            # In the turned frame the ball starts about 3 cm left of straight ahead, on the desk,
+            # and the first guess the student is given is near it.
             self.assertAlmostEqual(float(arrays["ball"][0, 1]), 0.03, delta=0.03)
             self.assertAlmostEqual(float(arrays["ball"][0, 2]), pickup.BALL_RADIUS_M, delta=0.002)
+            self.assertLess(math.dist(arrays["guess"][0], arrays["ball"][0, :2]), 0.04)
+            self.assertAlmostEqual(float(arrays["guess"][0, 1]), 0.03, delta=1e-4)
             self.assertTrue(bool(arrays["open"][0]) and not bool(arrays["open"][-1]))
+            self.assertGreater(outcome["in_view_from_look_pose"], 0.3)
         self.assertGreaterEqual(lifted, 2)
+
+    def test_the_look_pose_shows_nearly_every_place_a_ball_can_be(self):
+        from understudy.kinematics import Chain
+
+        chain, rng, whole = Chain(), random.Random(5), {"look": 0, "start": 0}
+        for _ in range(400):
+            ball = (*dagger.place_ball(rng), pickup.BALL_RADIUS_M)
+            whole["look"] += self.scene.nominal.sight(ball, dagger.LOOK_POSE, chain).inside
+            whole["start"] += self.scene.nominal.sight(ball, pickup.START_POSE, chain).inside
+        self.assertGreater(whole["look"], 0.9 * 400)
+        self.assertLess(whole["start"], 0.75 * 400)  # which is why the ball is not looked for from the start pose
 
     def test_an_untrained_student_can_drive_while_the_teacher_labels(self):
         torch.manual_seed(0)

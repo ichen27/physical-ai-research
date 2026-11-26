@@ -8,8 +8,10 @@ still told where the ball is) labels every step with what it would do from
 there, and the student is retrained on everything gathered so far. This is the
 DAgger procedure.
 
-An attempt here is what an attempt on the real arm is: a ball is put down in
-front of the arm, the arm turns to face it (``understudy.runner.turn_to_face``),
+An attempt here is what an attempt on the real arm would be: a ball is put down
+in front of the arm; the arm rises to a pose that shows everywhere a ball can
+be (``LOOK_POSE``) and the ball is found in that one picture; the arm turns to
+face it (``understudy.runner.turn_to_face``) and comes down to the start pose;
 and the policy runs through ``understudy.runner.run_pickup`` under the real
 arm's speed limits, in servo ticks. Only the pictures are simulated, with a new
 look each attempt (``understudy.sim_look``).
@@ -34,21 +36,30 @@ from .kinematics import Chain
 from .mujoco_arm import MujocoArm, build_model
 from .runner import AIM_LEFT_M, REACH_BAND_M, SWIVEL_AXIS_X_M, in_turned_frame, run_pickup, turn_to_face, turned
 from .sim_look import PICTURE_HEIGHT, PICTURE_WIDTH, Scene, dress, student_camera
-from .student import BALL_SCALE, LEAD_LIMIT_RAD, PROPRIO_SIZE, SPEED_LIMIT_RAD_S, Brain, StudentNet
+from .student import BALL_SCALE, GUESS_SIZE, LEAD_LIMIT_RAD, PROPRIO_SIZE, SPEED_LIMIT_RAD_S, Brain, StudentNet
 
-# Balls are put where facing them means turning at most this far: within the picture from the start pose.
+# Balls are put where facing them means turning at most this far.
 AHEAD_TURN_RAD = 0.45
-# With the teacher driving the first round, the arm is faced using the ball's true place, this far out
-# at random, so the student also learns from balls that are not exactly where facing aims to put them.
-FACING_NOISE_M = 0.006
+# The pose the ball is looked for from: the start pose with the shoulder back 0.3 rad, the elbow
+# in 0.4 and the wrist down 0.4, which lifts the camera to about 28 cm. With the first real arm's
+# calibrated camera it shows every place a ball can be, whole; the start pose shows 43% of them.
+LOOK_POSE = (0.0, -0.9, 0.1, 1.6, 0.0)
+# When the arm is faced using the ball's true place instead of the student's guess, the place is
+# put this far out at random, about what the student's guess is out by. The student then also
+# learns from first guesses that are wrong, and from balls not exactly where facing aims to put them.
+FACING_NOISE_M = 0.008
 TRAINING_SECONDS = 10.0
 IN_VIEW = 0.5  # the share of the ball's disc that must be seen for it to count as in the picture
 BURN_IN = 8  # steps at the start of each training window that only warm the memory up
 
 
-def bench() -> tuple[MujocoArm, Scene]:
-    """A simulated arm with a dressed scene and wrist camera, as every attempt here uses."""
-    nominal = student_camera()
+def bench(nominal=None) -> tuple[MujocoArm, Scene]:
+    """A simulated arm with a dressed scene and wrist camera, as every attempt here uses.
+
+    ``nominal`` is the camera as it is believed to be (an ``understudy.camera_model.WristCamera``
+    at the real picture's full size); left out, it is ``understudy.sim_look.student_camera()``.
+    """
+    nominal = nominal or student_camera()
     model = build_model(wrist_camera=nominal.resized(2 * PICTURE_WIDTH, 2 * PICTURE_HEIGHT), extras=dress)
     sim = MujocoArm(model, command_delay_s=0.015, profile_time_s=arm.VENDOR_PROFILE_TIME_S)
     return sim, Scene(sim, nominal)
@@ -71,6 +82,7 @@ class Episode:
     open: list = field(default_factory=list)
     ball: list = field(default_factory=list)
     visible: list = field(default_factory=list)
+    guess: list = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.pictures)
@@ -83,6 +95,7 @@ class Episode:
             "open": np.asarray(self.open, dtype=np.float32),
             "ball": np.asarray(self.ball, dtype=np.float32),
             "visible": np.asarray(self.visible, dtype=np.float32),
+            "guess": np.asarray(self.guess, dtype=np.float32).reshape(len(self.pictures), GUESS_SIZE),
         }
 
 
@@ -95,10 +108,13 @@ class PictureDriver:
 
     With a ``teacher`` it also asks the teacher what it would do, for the record, telling
     it where the ball truly is. ``drive`` says whose output moves the arm. The student is
-    never given the ball's position: with no teacher, the position reported is zeros.
+    never given the ball's position: with no teacher, the position reported is zeros. What
+    the student is given, on every step, is ``guess``: where it was taken to be when the
+    arm turned to face it (x, y in the turned frame).
     """
 
-    def __init__(self, scene: Scene, interface: runtime.Interface, turn: float, brain: Brain | None = None,
+    def __init__(self, scene: Scene, interface: runtime.Interface, turn: float, guess: Sequence[float],
+                 brain: Brain | None = None,
                  teacher: Callable[[Sequence[float]], Sequence[float]] | None = None, drive: str = "student",
                  record: Episode | None = None, blank: tuple[int, int] | None = None,
                  ball_for_teacher: Callable[[], Sequence[float]] | None = None):
@@ -110,6 +126,7 @@ class PictureDriver:
         self._scene, self._turn, self._brain, self._teacher = scene, turn, brain, teacher
         self._drive, self._record, self._blank = drive, record, blank
         self._ball_for_teacher = ball_for_teacher
+        self._guess = (float(guess[0]), float(guess[1]))
         self._teacher_last = [0.0] * runtime.ACTION_SIZE
         self._step = 0
         self._picture, self._visible, self._ball = None, 0.0, (0.0, 0.0, 0.0)
@@ -128,8 +145,9 @@ class PictureDriver:
 
     def __call__(self, observation: Sequence[float]) -> list[float]:
         readings = student.proprio_from_observation(observation)
-        thought = self._brain.step(self._picture, readings) if self._brain is not None else None
+        thought = self._brain.step(self._picture, readings, self._guess) if self._brain is not None else None
         if thought is not None:
+            thought["picture_showed_ball"] = self._visible
             self.thoughts.append(thought)
         wanted = None
         if self._teacher is not None:
@@ -146,15 +164,18 @@ class PictureDriver:
                 self._record.open.append(float(is_open))
                 self._record.ball.append(self._ball)
                 self._record.visible.append(self._visible)
+                self._record.guess.append(self._guess)
         self._step += 1
         if self._drive == "teacher":
             return wanted
         return student.action_from_moves(thought["moves"], thought["open"], self.interface.arm_action_scale)
 
 
-def find_ball(scene: Scene, brain: Brain, hold_target: Sequence[float], looks: int = 3) -> tuple[float, float] | None:
-    """Where the student says the ball is, from the start pose, or None if it does not see one."""
+def find_ball(scene: Scene, brain: Brain, hold_target: Sequence[float], pose: Sequence[float] = LOOK_POSE,
+              looks: int = 3) -> tuple[float, float] | None:
+    """Where the student says the ball is, with the arm still in ``pose``, or None if it does not see one."""
     readings = np.zeros(PROPRIO_SIZE, dtype=np.float32)
+    readings[:6] = np.subtract([*pose, pickup.GRIPPER_OPEN_RAD], runtime.SENSED_START)
     readings[12:15] = hold_target
     seen = [brain.glance(scene.picture_now()[0], readings) for _ in range(looks)]
     if float(np.median([sure for _, sure in seen])) < 0.5:
@@ -165,7 +186,8 @@ def find_ball(scene: Scene, brain: Brain, hold_target: Sequence[float], looks: i
 def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, brain: Brain | None = None,
                 drive: str = "student", facing: str = "student", seconds: float = pickup.EPISODE_SECONDS,
                 record: bool = False, blank: tuple[int, int] | None = None, ball_source=None) -> tuple[dict, Episode | None]:
-    """One attempt: a ball ahead of the arm, a new look, face the ball, run the policy with the speed limits.
+    """One attempt: a ball ahead of the arm, a new look; rise and look for it, face it, come down to the
+    start pose, and run the policy with the speed limits.
 
     ``facing`` is "student" (the arm turns to where the student says the ball is), "truth"
     (to where it is, a few millimetres out at random) or "exact". ``ball_source`` "student"
@@ -178,6 +200,10 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
     sim.after_step = None
     scene.new_look(rng, ball)
     outcome = {"found": True, "lifted": False, "ever_lifted": False, "stopped": False, "facing_error_m": None}
+    calibration = sim.calibration
+    gripper = [calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)]
+    sim.move_slowly(calibration.to_ticks(LOOK_POSE) + gripper, move_seconds(pickup.START_POSE, LOOK_POSE))
+    outcome["in_view_from_look_pose"] = scene.picture_now()[1]
     if facing == "student":
         guess = find_ball(scene, brain, target)
         if guess is None:
@@ -193,9 +219,10 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
         turn = turn_to_face(guess)
     except ValueError:
         return {**outcome, "found": False}, None
-    frame = turned(sim.calibration, turn)
-    start = frame.to_ticks(pickup.START_POSE) + [frame.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)]
-    sim.move_slowly(start, move_seconds([0.0], [turn]))
+    frame = turned(calibration, turn)
+    sim.move_slowly(frame.to_ticks(pickup.START_POSE) + gripper, move_seconds(LOOK_POSE, (turn, *pickup.START_POSE[1:])))
+    first = in_turned_frame((*guess, pickup.BALL_RADIUS_M), turn)
+    outcome["in_view_from_start_pose"] = scene.picture_now()[1]
 
     episode = Episode() if record else None
     interface = getattr(teacher, "interface", None) or runtime.Interface.current()
@@ -203,11 +230,10 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
     if ball_source == "student":
         # One step late: the student's idea of the ball after the last picture. Before the first
         # picture, where it said the ball was when the arm turned to face it.
-        first = in_turned_frame((*guess, pickup.BALL_RADIUS_M), turn)
         told = lambda: driver.thoughts[-1]["ball"] if driver.thoughts else first  # noqa: E731
     elif ball_source is not None:
         raise ValueError("ball_source must be None or 'student'")
-    driver = PictureDriver(scene, interface, turn, brain, teacher, drive, episode, blank, told)
+    driver = PictureDriver(scene, interface, turn, first[:2], brain, teacher, drive, episode, blank, told)
     heights: list[float] = []
     sim.after_step = lambda arm_sim: heights.append(float(arm_sim.ball()[2]))
     try:
@@ -220,7 +246,9 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
     outcome["ever_lifted"] = bool(heights) and max(heights) > pickup.LIFTED_HEIGHT_M
     outcome["lifted"] = not outcome["stopped"] and len(heights) >= final and float(np.mean(heights[-final:])) > pickup.LIFTED_HEIGHT_M
     if driver.thoughts:
-        on_desk = [i for i, h in enumerate(heights[: len(driver.thoughts)]) if h < pickup.BALL_RADIUS_M + 0.004]
+        # Where the student put the ball from single pictures, while it lay on the desk in view.
+        on_desk = [i for i, h in enumerate(heights[: len(driver.thoughts)])
+                   if h < pickup.BALL_RADIUS_M + 0.004 and driver.thoughts[i]["picture_showed_ball"] >= IN_VIEW]
         truth = in_turned_frame((*ball, pickup.BALL_RADIUS_M), turn)
         errors = [math.dist(driver.thoughts[i]["seen"][:2], truth[:2]) for i in on_desk[:30]]
         outcome["seen_error_m"] = float(np.median(errors)) if errors else None
@@ -228,11 +256,12 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
 
 
 def random_views(sim: MujocoArm, scene: Scene, rng: random.Random, count: int, per_look: int = 4) -> dict:
-    """Single pictures from poses all round the start pose, each with where the ball is.
+    """Single pictures from poses all round the start pose and the look pose, each with where the ball is.
 
     The attempts only show the ball from the poses a pickup passes through. These teach
-    the student's eye to place the ball from anywhere the camera calibration looks from,
-    which is what real pictures with known ball positions come from.
+    the student's eye to place the ball from the pose it is first looked for from, and
+    from anywhere the camera calibration looks from, which is what real pictures with
+    known ball positions come from.
     """
     import mujoco
 
@@ -243,8 +272,9 @@ def random_views(sim: MujocoArm, scene: Scene, rng: random.Random, count: int, p
         sim.reset(ball)
         scene.new_look(rng, ball)
         for _ in range(per_look):
+            about = pickup.START_POSE if rng.random() < 0.5 else LOOK_POSE
             for _ in range(100):
-                pose = [s + rng.uniform(-reach, reach) for s, reach in zip(pickup.START_POSE, WIDE_RANGE)]
+                pose = [s + rng.uniform(-reach, reach) for s, reach in zip(about, WIDE_RANGE)]
                 if pose_is_clear(pose, chain):
                     break
             finger = pickup.GRIPPER_OPEN_RAD if rng.random() < 0.7 else rng.uniform(0.0, pickup.GRIPPER_OPEN_RAD)
@@ -262,6 +292,7 @@ def random_views(sim: MujocoArm, scene: Scene, rng: random.Random, count: int, p
             out.open.append(1.0)
             out.ball.append((*ball, pickup.BALL_RADIUS_M))
             out.visible.append(visible)
+            out.guess.append((0.0, 0.0))  # not used: a single picture is read without it
     return out.arrays()
 
 
@@ -283,6 +314,7 @@ class Experience:
         self.open = np.zeros(capacity, dtype=np.float32)
         self.ball = np.zeros((capacity, 3), dtype=np.float32)
         self.visible = np.zeros(capacity, dtype=np.float32)
+        self.guess = np.zeros((capacity, GUESS_SIZE), dtype=np.float32)
         self.size = 0
         self.runs: list[tuple[int, int]] = []  # attempts: first step and length
         self.views: list[tuple[int, int]] = []  # blocks of single pictures
@@ -293,7 +325,7 @@ class Experience:
             return None
         where = slice(self.size, self.size + count)
         self.pictures[where] = arrays["pictures"]
-        for name in ("proprio", "moves", "open", "ball", "visible"):
+        for name in ("proprio", "moves", "open", "ball", "visible", "guess"):
             getattr(self, name)[where] = arrays[name]
         self.size += count
         return (where.start, count)
@@ -340,7 +372,7 @@ class Experience:
                 visible[row, first : first + stretch] = 0.0
         out = {
             "pictures": pictures, "proprio": self.proprio[index], "moves": self.moves[index], "open": self.open[index],
-            "ball": self.ball[index], "visible": visible,
+            "ball": self.ball[index], "visible": visible, "guess": self.guess[index],
         }
         if views and self.views:
             total = sum(count for _, count in self.views)
@@ -369,7 +401,7 @@ def losses(net: StudentNet, batch: dict, device: torch.device) -> dict:
         return torch.from_numpy(batch[name]).to(device)
 
     pictures = tensor("pictures").permute(0, 1, 4, 2, 3)
-    out = net(pictures, tensor("proprio"))
+    out = net(pictures, tensor("proprio"), tensor("guess"))
     visible, ball = tensor("visible"), tensor("ball")
     in_view = (visible >= IN_VIEW).float()
     after = slice(BURN_IN, None)
@@ -399,6 +431,7 @@ def gather(job: dict) -> list[dict]:
     """Run one batch of attempts (or take single pictures) in this process and save them for the trainer.
 
     ``job`` has: ``seed``; ``spool`` (folder to save into); ``teacher`` (path of the policy);
+    ``camera`` (a wrist camera file to take as nominal, or None for the built-in one);
     ``student`` (path of the student so far, or None); ``attempts``; ``student_drives`` (the
     share of attempts the student drives); ``student_faces`` (the share of those in which
     the arm is faced by the student's own guess); and ``views`` (single pictures to take
@@ -406,7 +439,9 @@ def gather(job: dict) -> list[dict]:
     """
     torch.set_num_threads(1)
     if "sim" not in _BENCH:
-        _BENCH["sim"], _BENCH["scene"] = bench()
+        from .camera_model import WristCamera
+
+        _BENCH["sim"], _BENCH["scene"] = bench(WristCamera.load(job["camera"]) if job.get("camera") else None)
         _BENCH["teacher"] = runtime.OnnxPolicy(job["teacher"])
         _BENCH["student_path"], _BENCH["brain"] = None, None
     if job.get("student") != _BENCH["student_path"]:

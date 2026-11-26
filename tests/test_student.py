@@ -20,6 +20,7 @@ from understudy.runner import ArmReading, goals_from_command, run_pickup
 from understudy.sim_look import PICTURE_HEIGHT, PICTURE_WIDTH
 
 SCALE = 0.1  # the teacher's action scale
+GUESS = (0.2, 0.03)  # where the ball was taken to be before the attempt
 LIMITS = dict(max_speed=student.SPEED_LIMIT_RAD_S, max_lead=student.LEAD_LIMIT_RAD)
 INTERFACE = runtime.Interface("incremental", SCALE, 0.35)
 
@@ -108,7 +109,8 @@ class NetTests(unittest.TestCase):
         self.net = student.StudentNet()
 
     def test_shapes(self):
-        out = self.net(torch.zeros(2, 5, 3, PICTURE_HEIGHT, PICTURE_WIDTH), torch.zeros(2, 5, student.PROPRIO_SIZE))
+        out = self.net(torch.zeros(2, 5, 3, PICTURE_HEIGHT, PICTURE_WIDTH), torch.zeros(2, 5, student.PROPRIO_SIZE),
+                       torch.zeros(2, 5, student.GUESS_SIZE))
         self.assertEqual(out["moves"].shape, (2, 5, 5))
         self.assertEqual(out["open"].shape, (2, 5))
         self.assertEqual(out["ball"].shape, (2, 5, 3))
@@ -118,31 +120,39 @@ class NetTests(unittest.TestCase):
     def test_memory_carries_from_step_to_step_and_reset_clears_it(self):
         brain = student.Brain(self.net)
         readings = np.zeros(student.PROPRIO_SIZE, dtype=np.float32)
-        first = brain.step(picture(1), readings)
-        after_other = brain.step(picture(2), readings)
+        first = brain.step(picture(1), readings, GUESS)
+        after_other = brain.step(picture(2), readings, GUESS)
         brain.reset()
-        fresh = brain.step(picture(2), readings)
+        fresh = brain.step(picture(2), readings, GUESS)
         self.assertFalse(np.allclose(after_other["moves"], fresh["moves"]))  # what came before matters
         brain.reset()
-        np.testing.assert_allclose(brain.step(picture(1), readings)["moves"], first["moves"], atol=1e-6)
+        np.testing.assert_allclose(brain.step(picture(1), readings, GUESS)["moves"], first["moves"], atol=1e-6)
         # What one picture alone says does not depend on what came before.
         np.testing.assert_allclose(after_other["seen"], fresh["seen"], atol=1e-6)
 
     def test_a_glance_leaves_the_memory_alone(self):
         brain = student.Brain(self.net)
         readings = np.zeros(student.PROPRIO_SIZE, dtype=np.float32)
-        brain.step(picture(1), readings)
+        brain.step(picture(1), readings, GUESS)
         position, sure = brain.glance(picture(3), readings)
         self.assertEqual(len(position), 3)
         self.assertTrue(0.0 <= sure <= 1.0)
-        with_glance = brain.step(picture(2), readings)
+        with_glance = brain.step(picture(2), readings, GUESS)
         brain.reset()
-        brain.step(picture(1), readings)
-        np.testing.assert_allclose(brain.step(picture(2), readings)["moves"], with_glance["moves"], atol=1e-6)
+        brain.step(picture(1), readings, GUESS)
+        np.testing.assert_allclose(brain.step(picture(2), readings, GUESS)["moves"], with_glance["moves"], atol=1e-6)
+
+    def test_the_first_guess_steers_the_outputs_but_never_what_one_picture_says(self):
+        readings = np.zeros(student.PROPRIO_SIZE, dtype=np.float32)
+        near, far = student.Brain(self.net), student.Brain(self.net)
+        a, b = near.step(picture(1), readings, (0.15, 0.03)), far.step(picture(1), readings, (0.24, 0.03))
+        self.assertFalse(np.allclose(a["moves"], b["moves"]))
+        np.testing.assert_allclose(a["seen"], b["seen"], atol=1e-7)
+        self.assertEqual(a["in_view"], b["in_view"])
 
     def test_a_picture_of_the_wrong_size_is_refused(self):
         with self.assertRaises(ValueError):
-            student.Brain(self.net).step(np.zeros((36, 64, 3), np.uint8), np.zeros(student.PROPRIO_SIZE, np.float32))
+            student.Brain(self.net).step(np.zeros((36, 64, 3), np.uint8), np.zeros(student.PROPRIO_SIZE, np.float32), GUESS)
 
     def test_save_and_load(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -151,8 +161,8 @@ class NetTests(unittest.TestCase):
             loaded, notes = student.load(path)
         self.assertEqual(notes, {"round": 3})
         readings = np.zeros(student.PROPRIO_SIZE, dtype=np.float32)
-        np.testing.assert_allclose(student.Brain(loaded).step(picture(5), readings)["moves"],
-                                   student.Brain(self.net).step(picture(5), readings)["moves"], atol=1e-6)
+        np.testing.assert_allclose(student.Brain(loaded).step(picture(5), readings, GUESS)["moves"],
+                                   student.Brain(self.net).step(picture(5), readings, GUESS)["moves"], atol=1e-6)
 
 
 class StubScene:
@@ -178,7 +188,7 @@ class DriverTests(unittest.TestCase):
     def run_with(self, steps=12, **kwargs):
         jump = JumpArm()
         scene = StubScene()
-        driver = dagger.PictureDriver(scene, INTERFACE, **kwargs)
+        driver = dagger.PictureDriver(scene, INTERFACE, guess=GUESS, **kwargs)
         taken = run_pickup(jump, driver, jump.calibration, driver, [0.19, 0.0, 0.13], steps / arm.CONTROL_HZ,
                            advance=lambda: None, **LIMITS)
         return driver, taken, scene
@@ -214,14 +224,15 @@ class DriverTests(unittest.TestCase):
         self.assertTrue(bool(arrays["open"].all()))
         np.testing.assert_allclose(arrays["ball"][0], truth, atol=1e-6)
         self.assertEqual(arrays["pictures"].shape, (len(taken), PICTURE_HEIGHT, PICTURE_WIDTH, 3))
+        np.testing.assert_allclose(arrays["guess"], np.tile(GUESS, (len(taken), 1)), atol=1e-6)
 
     def test_a_blanked_stretch_reaches_the_student_as_grey(self):
         seen = []
 
         class Watching(student.Brain):
-            def step(self, image, readings):
+            def step(self, image, readings, guess):
                 seen.append(image.copy())
-                return super().step(image, readings)
+                return super().step(image, readings, guess)
 
         torch.manual_seed(1)
         self.run_with(turn=0.0, brain=Watching(student.StudentNet()), drive="student", blank=(4, 3))
@@ -230,9 +241,9 @@ class DriverTests(unittest.TestCase):
 
     def test_someone_must_be_there_to_drive(self):
         with self.assertRaises(ValueError):
-            dagger.PictureDriver(StubScene(), INTERFACE, 0.0, drive="student")
+            dagger.PictureDriver(StubScene(), INTERFACE, 0.0, GUESS, drive="student")
         with self.assertRaises(ValueError):
-            dagger.PictureDriver(StubScene(), INTERFACE, 0.0, brain=student.Brain(student.StudentNet()), drive="teacher")
+            dagger.PictureDriver(StubScene(), INTERFACE, 0.0, GUESS, brain=student.Brain(student.StudentNet()), drive="teacher")
 
 
 def attempt(rng: np.random.Generator, steps: int, ball=(0.2, 0.03, 0.02)) -> dict:
@@ -243,6 +254,7 @@ def attempt(rng: np.random.Generator, steps: int, ball=(0.2, 0.03, 0.02)) -> dic
         "open": (np.arange(steps) < steps // 3).astype(np.float32),
         "ball": np.tile(np.asarray(ball, dtype=np.float32), (steps, 1)),
         "visible": np.ones(steps, dtype=np.float32),
+        "guess": np.tile(np.asarray(ball[:2], dtype=np.float32), (steps, 1)),
     }
 
 

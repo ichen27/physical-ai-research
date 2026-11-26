@@ -53,6 +53,9 @@ Known limitations:
 | `understudy/camera_collect.py` | Has the arm take those pictures itself: notices the ball, learns its colour, chooses the poses |
 | `understudy/camera_feed.py` | Pictures from the real camera, by name, and from no other camera |
 | `understudy/seek.py` | Looks for the ball and turns the arm to face it |
+| `understudy/sim_look.py` | Simulated wrist-camera pictures with a different look every attempt |
+| `understudy/student.py` | A pickup policy that sees the camera's picture instead of being told where the ball is |
+| `understudy/dagger.py` | Teaches that student by having it drive while the trained policy says what it would have done |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/build_finger_collision.py` | Builds the fingers' collision shapes as convex pieces that keep their claw shape |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
@@ -63,6 +66,9 @@ Known limitations:
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
 | `scripts/mujoco_camera_calibration.py` | Runs the wrist camera's calibration procedure in MuJoCo and checks the result |
 | `scripts/camera_watch.sh` | Left running in Terminal on the Mac the camera is plugged into; takes a picture when asked |
+| `scripts/train_student.py` | Trains the picture-driven student in MuJoCo, on one computer with no GPU rental |
+| `scripts/evaluate_student.py` | Measures the student's pickup rate in MuJoCo beside the teacher's |
+| `scripts/student_on_real_pictures.py` | Scores where the student says the ball is on real pictures with known ball positions |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
 | `scripts/real_arm.py` | Calibrates the real arm and its camera and runs a policy on it. One real pickup so far, with speed limits and without the camera |
 | `results/` | Trained policies and their measurements |

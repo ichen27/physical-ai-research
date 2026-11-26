@@ -46,7 +46,9 @@ DISTRACTORS = 12
 DESK_PATTERNS = ("flat", "speckle", "blotch", "grain", "tiles", "weave")
 # Kept out of training, so that a measurement on held-out looks includes desks never seen.
 HELD_OUT_PATTERNS = ("tiles", "weave")
-# How far the camera is moved about its nominal mount, and its lens about the nominal lens.
+# How far the camera is moved about its nominal mount, and its lens about the nominal lens: about
+# what a calibration leaves unknown. Each of these also blurs where the student can say the ball is
+# (1.5 degrees is 5 mm at 20 cm), and the pickup tolerates about 1 cm, so they are not made wider.
 MOUNT_SHIFT_M = 0.003
 MOUNT_TURN_RAD = math.radians(1.5)
 FOCAL_SPREAD = 0.04
@@ -372,13 +374,21 @@ def shrink(image_bgr: np.ndarray) -> np.ndarray:
 
 
 def student_camera() -> WristCamera:
-    """The nominal wrist camera at the real camera's full picture size.
+    """The nominal wrist camera, at the real camera's full picture size.
 
-    A stand-in until the real camera is calibrated: mounted where the first real arm's
-    seems to be from its pictures, with a first estimate of its lens.
+    A rough fit to the first real arm's camera, not its calibration. It comes from the
+    eight whole sightings of the ball in that arm's first calibration attempt
+    (2026-11-26), which stopped early, fitted with the poses the arm was commanded to and
+    not the ones it reported. A point not used in the fit was then placed consistently from
+    all eleven pictures, to within 6 to 9 mm. It is only a stand-in for people without the arm:
+    that arm's real calibration, made later the same day, has a 975-pixel lens on the gripper's
+    centre line, 7 degrees and 4 cm away from this. Train with the real calibration when there
+    is one (``scripts/train_student.py --camera``).
+
+    It differs greatly from the first guess used for ``understudy.mujoco_arm.sim_wrist_camera``:
+    the lens is about half as wide (62 degrees across, not 102), and from the start pose the
+    camera looks almost straight down, seeing the desk from about 6 to 22 cm ahead.
     """
-    from .mujoco_arm import sim_wrist_camera
-
-    return sim_wrist_camera().resized(1280, 720)
+    return WristCamera(1280, 720, 1055.1, (640.0, 360.0), 0.0, (-0.066, 0.0369, 0.0405), (-1.4751, 1.7807, -0.8959))
 
 

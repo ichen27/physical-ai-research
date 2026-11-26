@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 # Before torch is imported: keep the Apple GPU's share of the computer's memory modest.
@@ -34,7 +35,8 @@ sys.path.insert(0, str(REPO))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from understudy import dagger, student  # noqa: E402
+from understudy import dagger, sim_look, student  # noqa: E402
+from understudy.camera_model import WristCamera  # noqa: E402
 
 # The share of attempts the student drives in each round after the first, and the share of
 # those in which the arm is turned to face the ball by the student's own guess.
@@ -54,6 +56,8 @@ def memory_free_percent() -> float | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--teacher", default=str(REPO / "results/pickup/2026-11-24-claw/policy.onnx"))
+    parser.add_argument("--camera", help="A wrist camera file (from real_arm.py camera-fit) to take as the nominal camera. "
+                        "Left out, the built-in rough fit is used (understudy.sim_look.student_camera).")
     parser.add_argument("--data", required=True, help="Folder for the gathered pictures (about 30 KB a step; not kept in Git).")
     parser.add_argument("--out", required=True, help="Folder for the student and the training record.")
     parser.add_argument("--rounds", type=int, default=7)
@@ -79,6 +83,10 @@ def main() -> None:
     steps_each = int(dagger.TRAINING_SECONDS * 30)
     capacity = args.views + (args.first + args.each * (args.rounds - 1)) * steps_each + 1000
     experience = dagger.Experience(data, capacity)
+    nominal = WristCamera.load(args.camera) if args.camera else sim_look.student_camera()
+    camera_notes = {"nominal_camera": asdict(nominal), "nominal_camera_from": args.camera or "the built-in rough fit",
+                    "speed_limit_rad_s": student.SPEED_LIMIT_RAD_S, "lead_limit_rad": student.LEAD_LIMIT_RAD,
+                    "look_pose": list(dagger.LOOK_POSE)}
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
     net = student.StudentNet().to(device)
@@ -117,14 +125,14 @@ def main() -> None:
             share = -(-attempts // (args.workers * 4))  # small jobs, so no one process holds much
             jobs = [
                 {"seed": args.seed * 100000 + round_number * 1000 + index, "spool": str(spool), "teacher": args.teacher,
-                 "student": student_path, "attempts": min(share, attempts - index * share), "student_drives": drives,
+                 "camera": args.camera, "student": student_path, "attempts": min(share, attempts - index * share), "student_drives": drives,
                  "student_faces": STUDENT_FACES}
                 for index in range(-(-attempts // share)) if attempts - index * share > 0
             ]
             if round_number == 0:
                 per = 2000
                 jobs += [{"seed": args.seed * 100000 + 900000 + index, "spool": str(spool), "teacher": args.teacher,
-                          "views": per} for index in range(args.views // per)]
+                          "camera": args.camera, "views": per} for index in range(args.views // per)]
             outcomes = []
             for result in pool.imap_unordered(dagger.gather, jobs):
                 outcomes += result
@@ -163,7 +171,8 @@ def main() -> None:
                         return
             seconds = time.monotonic() - training
             student_path = str(out / f"student-round{round_number}.pt")
-            student.save(net.to("cpu"), student_path, round=round_number, steps_held=experience.size, seed=args.seed)
+            student.save(net.to("cpu"), student_path, round=round_number, steps_held=experience.size, seed=args.seed,
+                         **camera_notes)
             net.to(device)
             note({"round": round_number, "trained_steps": args.steps, "train_seconds": round(seconds),
                   "pictures_a_second": round(args.steps * (args.windows * args.length + args.view_batch) / seconds),

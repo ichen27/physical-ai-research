@@ -33,6 +33,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from understudy import arm, dagger, pickup, runtime, sim_look, student  # noqa: E402
+from understudy.camera_model import WristCamera  # noqa: E402
 from understudy.runner import REACH_BAND_M  # noqa: E402
 
 # The teacher closes the gripper between steps 52 and 71 of an attempt (measured over 40 attempts).
@@ -60,7 +61,10 @@ def main() -> None:
     teacher = runtime.OnnxPolicy(args.teacher)
     net, notes = student.load(args.student)
     brain = student.Brain(net)
-    sim, scene = dagger.bench()
+    # The camera the student was trained for, which travels with it.
+    nominal = WristCamera(**{key: tuple(value) if isinstance(value, list) else value
+                             for key, value in notes["nominal_camera"].items()}) if "nominal_camera" in notes else None
+    sim, scene = dagger.bench(nominal)
     scene.held_out = not args.seen_looks
     for name in args.rows:
         row = dict(ROWS[name])
