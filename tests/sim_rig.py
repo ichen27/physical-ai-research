@@ -82,14 +82,20 @@ class SimRobot:
         # The real servos cut their own power if the computer is silent for 500 ms, and the
         # raised arm drops. This remembers the longest silence while powered, on the real clock.
         self.longest_silence_s = 0.0
+        self.longest_silence_at = "nowhere yet"  # what the tool was doing when it ended, for a failing test to say
         self._heard = None
 
     def _hearing(self) -> None:
         """Call at the start of anything that talks to the servos."""
         import time
+        import traceback
 
         if self.torque_on and self._heard is not None:
-            self.longest_silence_s = max(self.longest_silence_s, time.monotonic() - self._heard)
+            silence = time.monotonic() - self._heard
+            if silence > self.longest_silence_s:
+                self.longest_silence_s = silence
+                calls = traceback.extract_stack(limit=9)[:-2]
+                self.longest_silence_at = " < ".join(f"{call.name}:{call.lineno}" for call in reversed(calls))
 
     def _heard_now(self) -> None:
         import time

@@ -142,6 +142,7 @@ class ToolWithCameraTests(unittest.TestCase):
                 cls.collect_output = bench.run(cls.tool, cls.tool.cmd_camera_collect, places=2, wait_pictures=6)
         bench.on_picture = None
         cls.collect_silence_s = bench.robot.longest_silence_s
+        cls.collect_silence_at = bench.robot.longest_silence_at
         cls.fit_output = bench.run(cls.tool, cls.tool.cmd_camera_fit, max_error_mm=8.0)
 
     @classmethod
@@ -154,7 +155,7 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertIn("place 2: the ball was seen from", self.collect_output)
         self.assertIn("torque off, settings restored", self.collect_output)
         self.assertFalse(self.bench.robot.torque_on)
-        self.assertLess(self.collect_silence_s, QUIET_LIMIT_S)
+        self.assertLess(self.collect_silence_s, QUIET_LIMIT_S, f"longest silence ended in: {self.collect_silence_at}")
         saved = json.loads((self.bench.folder / "sightings.json").read_text())
         self.assertGreaterEqual(len(saved["sightings"]), 30)
         self.assertIn("hue_low", saved["colour"])
@@ -189,7 +190,8 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertIn("the arm has turned to face it", out, out)
         self.assertIn("torque off, settings restored", out)
         self.assertGreater(self.bench.highest, pickup.LIFTED_HEIGHT_M, out)
-        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
         self.assertLess(log["turn_rad"], -0.5)
         self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)  # in the turned frame the ball is 3 cm to the left
         self.assertFalse(self.bench.robot.torque_on)
@@ -205,7 +207,8 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)
         self.assertLess(self.bench.highest, pickup.BALL_RADIUS_M + 0.002)  # the ball never left the desk
         self.assertFalse(self.bench.robot.torque_on)
-        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
 
     def test_stops_without_a_pickup_when_there_is_no_ball(self):
         out, log = self.run_pickup((0.6, 0.5))
