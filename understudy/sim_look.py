@@ -42,7 +42,7 @@ _RENDER_SCALE = 2  # rendered at twice that and shrunk, as the real picture is s
 # Rendered with a wider view than the camera's, so that a lens that bends lines inward has something to show at its edges.
 _WIDE = 1.3
 _TEXTURE = 128
-DISTRACTORS = 12
+DISTRACTORS = 16
 DESK_PATTERNS = ("flat", "speckle", "blotch", "grain", "tiles", "weave")
 # Kept out of training, so that a measurement on held-out looks includes desks never seen.
 HELD_OUT_PATTERNS = ("tiles", "weave")
@@ -118,7 +118,7 @@ def _clear_of_reach(x: float, y: float, ball_xy: tuple[float, float], margin_m: 
 def desk_texture(rng: random.Random, pattern: str) -> np.ndarray:
     """A desk surface: a base colour with one of several patterns over it. Red-green-blue bytes."""
     if rng.random() < 0.6:  # greys and off-whites, light to dark
-        base = np.array(_colour(rng, (0, 360), (0.0, 0.15), (0.25, 0.95)))
+        base = np.array(_colour(rng, (0, 360), (0.0, 0.15), (0.35, 0.95)))
     else:  # woods, beiges, blues, greens: anything not strongly red or orange
         base = np.array(_colour(rng, (25, 290), (0.1, 0.45), (0.2, 0.9)))
     contrast = rng.uniform(0.02, 0.3)
@@ -227,7 +227,7 @@ class Scene:
         lamp = aim + away * np.array([math.cos(height) * math.cos(bearing), math.cos(height) * math.sin(bearing), math.sin(height)])
         warmth = rng.uniform(-0.15, 0.15)  # towards yellow or towards blue
         tint = np.array([1 + warmth, 1.0, 1 - warmth])
-        strength = rng.uniform(0.35, 1.0)
+        strength = rng.uniform(0.45, 1.0)
         model.light_pos[self._main] = lamp
         model.light_dir[self._main] = (aim - lamp) / np.linalg.norm(aim - lamp)
         model.light_diffuse[self._main] = np.clip(strength * tint, 0, 1)
@@ -236,7 +236,7 @@ class Scene:
         model.light_pos[self._fill] = [rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(0.5, 2.0)]
         model.light_dir[self._fill] = [0, 0, -1]
         model.light_diffuse[self._fill] = rng.uniform(0.0, 0.4) * tint
-        model.vis.headlight.ambient[:] = rng.uniform(0.08, 0.5) * tint
+        model.vis.headlight.ambient[:] = rng.uniform(0.1, 0.7) * tint
         model.vis.headlight.diffuse[:] = rng.uniform(0.0, 0.3)
 
         # Desk.
@@ -250,8 +250,10 @@ class Scene:
         model.mat_texrepeat[self._desk_material] = [repeat, repeat]
         model.mat_specular[self._desk_material] = rng.uniform(0.0, 0.3)
 
-        # Ball: orange through coral, as the real one reads on this camera; and how it rolls.
-        model.mat_rgba[self._ball_material] = [*_colour(rng, (3, 36), (0.6, 1.0), (0.7, 1.0)), 1.0]
+        # Ball: orange through coral, deep to pale. On the real camera the foam ball reads pale and
+        # bright, almost glowing, even in the arm's shadow, so it is given some light of its own.
+        model.mat_rgba[self._ball_material] = [*_colour(rng, (0, 36), (0.3, 1.0), (0.75, 1.0)), 1.0]
+        model.mat_emission[self._ball_material] = rng.choice((0.0, rng.uniform(0.0, 0.45)))
         model.geom_friction[self._ball_geom][0] = rng.uniform(0.7, 1.2)
         model.body_mass[self._ball_body] = rng.uniform(0.004, 0.008)
 
@@ -267,7 +269,7 @@ class Scene:
                 continue
             kind = rng.choice(("box", "cylinder", "ball", "wire", "wire"))
             for _ in range(40):
-                x, y = rng.uniform(0.0, 0.5), rng.uniform(-0.35, 0.35)
+                x, y = rng.uniform(0.0, 0.42), rng.uniform(-0.28, 0.28)  # where the camera looks
                 if ball_xy is None or _clear_of_reach(x, y, ball_xy):
                     break
             else:  # nowhere clear was found: leave it out
@@ -275,7 +277,7 @@ class Scene:
                 continue
             turn = rng.uniform(0, math.pi)
             if kind == "box":
-                size = [rng.uniform(0.005, 0.04), rng.uniform(0.005, 0.04), rng.uniform(0.003, 0.03)]
+                size = [rng.uniform(0.005, 0.07), rng.uniform(0.005, 0.07), rng.uniform(0.003, 0.03)]
                 model.geom_type[geom], height, quat = mujoco.mjtGeom.mjGEOM_BOX, size[2], [math.cos(turn / 2), 0, 0, math.sin(turn / 2)]
             elif kind == "cylinder":
                 size = [rng.uniform(0.005, 0.03), rng.uniform(0.003, 0.03), 0]
@@ -292,8 +294,11 @@ class Scene:
             model.geom_size[geom] = size
             model.geom_pos[geom] = [x, y, height]
             model.geom_quat[geom] = quat
-            if rng.random() < 0.45:  # red through orange: what the ball must be told from
+            shade = rng.random()
+            if shade < 0.35:  # red through orange: what the ball must be told from
                 rgb = _colour(rng, (340, 400), (0.5, 1.0), (0.5, 1.0))
+            elif shade < 0.6:  # black, grey and white things: boxes, bags, cables, a laptop
+                rgb = _colour(rng, (0, 360), (0.0, 0.1), (0.03, 1.0))
             else:
                 rgb = _colour(rng, (0, 360), (0.0, 0.8), (0.1, 1.0))
             model.geom_rgba[geom] = [*rgb, 1.0]
@@ -303,10 +308,12 @@ class Scene:
         veil = rng.choice((0.0, rng.uniform(0.0, 0.45)))
         grey = rng.uniform(150, 235)
         self._veil_colour = np.array([grey + rng.uniform(-12, 12) for _ in range(3)], dtype=np.float32)
-        self._gains = np.array([rng.uniform(0.85, 1.15) for _ in range(3)], dtype=np.float32) * rng.uniform(0.7, 1.25)
-        glare = rng.choice((0.0, rng.uniform(0.0, 0.6)))
+        # Exposure runs from dim to well over: the real camera blows out the ball's lit side and
+        # whatever is under the lamp, which here is the top of the picture more often than not.
+        self._gains = np.array([rng.uniform(0.85, 1.15) for _ in range(3)], dtype=np.float32) * rng.uniform(0.7, 2.0)
+        glare = rng.choice((0.0, rng.uniform(0.0, 0.6), rng.uniform(0.3, 1.0)))
         rows, columns = np.mgrid[0 : self._height, 0 : self._width].astype(np.float32)
-        gu, gv = rng.uniform(0, self._width), rng.uniform(-0.2, 0.6) * self._height
+        gu, gv = rng.uniform(0, self._width), rng.uniform(-0.2, rng.choice((0.2, 0.6))) * self._height
         su, sv = rng.uniform(0.15, 0.6) * self._width, rng.uniform(0.15, 0.6) * self._height
         self._glare = (glare * 255.0 * np.exp(-(((columns - gu) / su) ** 2 + ((rows - gv) / sv) ** 2)))[..., None]
         self.look = Look(camera, pattern, veil, rng.choice((0.0, rng.uniform(0.0, 1.6))), rng.uniform(0.0, 7.0), glare,
