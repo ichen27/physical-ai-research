@@ -181,13 +181,15 @@ def fit(
     by resting the gripper tip on the spot before the ball was put there. Those places are
     held where they are said to be and only the camera is fitted to them.
 
-    This matters more than it looks. With no place known, the answer is in the arm model's
-    frame *with the arm raised*, and that is only as true as the arm's joint zeros. On the
-    first real arm the zeros came from four touches of the desk, which leave the wrist's
-    zero free by several degrees; the fitted camera agreed with itself to 2 mm over three
-    resting places and still put a ball 1 cm nearer than a ruler did. A known place ties
-    the camera to where the gripper is when it is down at the desk, which is what a pickup
-    needs, and takes that error into the camera's mount.
+    With no place known, the answer is in the arm model's frame *with the arm raised*, and
+    that is only as true as the arm's joint zeros; the fit's own error does not show
+    whether they are. On the first real arm the zeros came from four touches of the desk,
+    which hold them loosely (several degrees of change for a millimetre of touch error),
+    and on a simulated arm with its wrist zero 4 degrees out the fitted camera agrees with
+    itself to 2 mm while putting unseen balls 12 mm off. Whether the real arm has such an
+    error has not been established. A known place ties the camera to where the gripper is
+    when it is down at the desk, which is what a pickup needs, takes any such error into
+    the camera's mount, and shows how large it was.
 
     A fit takes about half a second. ``tick`` is called thousands of times while it runs,
     so that a caller holding a powered arm can keep talking to its servos (see

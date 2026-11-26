@@ -467,10 +467,10 @@ def cmd_camera_fit(args) -> None:
         if told:
             guess = alone.places[place]
             print(f"      the pictures alone would have put it at x={guess[0]:.3f} y={guess[1]:.3f}, "
-                  f"{1000 * math.dist(guess, (x, y)):.0f} mm away: that much was wrong with the arm's idea of where its raised camera is")
+                  f"{1000 * math.dist(guess, (x, y)):.0f} mm away: that is how far the pictures and the known position disagree")
     if not known:
         print("  No place's position was given (--known). The camera then agrees with itself but is only as true as the arm's\n"
-              "  joint zeros with the arm raised; on the first real arm that left it reading 1 cm short. See the README.")
+              "  joint zeros with the arm raised, which this fit cannot check. See the README.")
     print(f"focal length {camera.focal_px:.0f} pixels (field of view {2 * math.degrees(math.atan(camera.width / 2 / camera.focal_px)):.0f} "
           f"degrees across); picture centre {camera.centre_px[0]:.0f}, {camera.centre_px[1]:.0f}; distortion {camera.distortion:+.3f}"
           + ("" if fit.fitted_lens else " (centre and distortion left at their defaults)"))

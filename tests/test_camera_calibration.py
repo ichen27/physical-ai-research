@@ -117,7 +117,7 @@ class FitTests(unittest.TestCase):
 
 
 class KnownPlaceTests(unittest.TestCase):
-    """An arm whose joint zeros are not quite what its calibration says, as the first real arm's were."""
+    """An arm whose joint zeros are not quite what its calibration says, which a camera fit alone cannot tell."""
 
     # Where the joints really are: the wrist's zero is 4 degrees from what the arm's calibration
     # says. Touches of the desk at a few distances barely tell that apart from a true one.
