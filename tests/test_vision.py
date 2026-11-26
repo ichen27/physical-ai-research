@@ -124,6 +124,91 @@ class NewBallTests(unittest.TestCase):
             vision.learn_colour(noise, vision.Blob(640, 360, 60, 1.0, False, 11310))
 
 
+def carpet_with_ball(u=640, v=330, radius=140, blown_out=True) -> tuple[np.ndarray, np.ndarray]:
+    """A beige, speckled desk with and without a lit ball on it, as the first real arm's camera sees one.
+
+    The ball's lit side is blown out to a pale yellow, close to the desk's own hue, and a
+    few specks of the desk nearly the ball's colour touch its rim. Made up, not photographed.
+    """
+    import cv2
+
+    rng = np.random.default_rng(5)
+    desk = np.empty((720, 1280, 3), np.float32)
+    desk[:] = (150, 185, 205)  # blue, green, red: beige
+    desk += rng.normal(0, 9, desk.shape)
+    desk[600:720, 1000:1280] = 12  # something black, as there always is, so the veil can be told
+    empty = np.clip(desk, 0, 255).astype(np.uint8)
+    ball = empty.copy()
+    cv2.circle(ball, (u, v), radius, (40, 120, 240), -1, cv2.LINE_AA)
+    if blown_out:
+        cv2.circle(ball, (u - radius // 4, v - radius // 4), radius // 2, (200, 250, 255), -1, cv2.LINE_AA)
+    for angle in (0.3, 1.9, 3.3, 4.4, 5.6):  # specks of the desk that happen to be nearly the ball's orange
+        x, y = u + (radius + 6) * np.cos(angle), v + (radius + 6) * np.sin(angle)
+        cv2.circle(ball, (int(x), int(y)), 9, (60, 130, 235), -1, cv2.LINE_AA)
+    return empty, ball
+
+
+class RealCameraLessonsTests(unittest.TestCase):
+    """What the first run on the real arm got wrong (2026-11-26), reproduced with made-up pictures."""
+
+    def test_a_blown_out_ball_on_a_beige_desk_is_seen_whole(self):
+        empty, placed = carpet_with_ball()
+        new = vision.find_new_ball(empty, placed)
+        self.assertIsNotNone(new)
+        colour = vision.learn_colour(placed, new)
+        found = vision.find_ball(placed, colour)
+        self.assertIsNotNone(found)
+        self.assertLess(abs(found.u - 640), 6)
+        self.assertLess(abs(found.v - 330), 6)
+        self.assertLess(abs(found.radius_px - 140), 0.08 * 140)
+
+    def test_colour_is_learnt_from_the_ball_and_not_from_its_blown_out_side(self):
+        empty, placed = carpet_with_ball()
+        colour = vision.learn_colour(placed, vision.find_new_ball(empty, placed))
+        # The desk is at hue 38 with saturation 0.27; the blown-out side at hue 55 with 0.22.
+        # A test wide enough for the blown-out side would take the whole desk for the ball.
+        self.assertLess(colour.hue_high, 38)
+        self.assertGreater(colour.saturation_min, 0.3)
+        self.assertLess(vision.orange_mask(empty, colour).mean(), 0.002)
+
+    def test_specks_touching_the_ball_do_not_make_it_less_whole(self):
+        _, placed = carpet_with_ball(blown_out=False)
+        blob = vision.find_blobs(placed)[0]
+        self.assertGreater(blob.roundness, 0.96)
+        self.assertTrue(blob.whole())
+        # The measure used before, the patch's area over the smallest circle around it, is
+        # dragged down by those five specks; on the real arm it fell under its 0.72 bar.
+        import cv2
+
+        mask = vision.orange_mask(placed).astype(np.uint8)
+        _, around = cv2.minEnclosingCircle(cv2.findNonZero(mask[150:520, 450:830]))
+        self.assertLess(blob.area_px / (np.pi * around**2), blob.roundness - 0.08)
+
+    def test_a_hole_inside_the_ball_does_not_count_against_it(self):
+        import cv2
+
+        image = np.full((720, 1280, 3), 120, np.uint8)
+        image[0:60, 0:60] = 10
+        cv2.circle(image, (500, 300), 100, (30, 118, 240), -1, cv2.LINE_AA)
+        cv2.circle(image, (480, 280), 45, (255, 255, 255), -1, cv2.LINE_AA)  # blown out to white: no colour at all
+        blob = vision.find_ball(image)
+        self.assertIsNotNone(blob)
+        self.assertLess(abs(blob.u - 500), 1.5)
+        self.assertLess(abs(blob.v - 300), 1.5)
+        self.assertLess(abs(blob.radius_px - 100), 2.0)
+
+    def test_roundness_falls_as_more_of_the_ball_is_hidden(self):
+        scores = []
+        for hidden_from in (760, 690, 680, 660, 640):  # nothing, then a growing slice of the right side
+            image = paint_ball(picture("hold1"), 640, 300, 60, cover=(hidden_from, 200, 760, 400))
+            scores.append(vision.find_blobs(image, colour_for(CORAL))[0].roundness)
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertGreater(scores[0], 0.99)
+        self.assertGreater(scores[1], vision.WHOLE_ROUNDNESS)  # a twentieth hidden still counts as whole
+        self.assertLess(scores[3], vision.WHOLE_ROUNDNESS)  # a quarter hidden does not
+        self.assertLess(scores[4], 0.85)
+
+
 class FileTests(unittest.TestCase):
     def test_decodes_a_picture_file(self):
         data = (ball_pictures.FIXTURES / "hold1.jpg").read_bytes()

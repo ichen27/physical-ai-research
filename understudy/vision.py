@@ -27,6 +27,11 @@ WORKING_WIDTH = 640  # pictures are shrunk to this width before the colour test
 # How far a pixel's colour must move, and how colourful it must end up, to count as part of a
 # newly placed ball (0 to 255, on a picture shrunk to the working width).
 NEW_BALL_TINT_CHANGE = 18.0
+# A patch is a whole ball if at least this share of it lies inside the circle of its own area.
+# On the first real arm's pictures a whole ball scores 0.96 to 0.99; a painted ball with a tenth
+# of it hidden 0.94, and half hidden 0.79.
+WHOLE_ROUNDNESS = 0.93
+BLOWN_OUT = 250  # a pixel with any colour channel at or above this (of 255) tells nothing about colour
 
 
 @dataclass(frozen=True)
@@ -59,11 +64,11 @@ class Blob:
     u: float  # centre
     v: float
     radius_px: float  # of the circle with the patch's area
-    roundness: float  # the patch's area over that of the smallest circle around it: 1 for a disc
+    roundness: float  # the share of the patch that lies inside that circle about its centre: 1 for a disc
     cut_off: bool  # touches the edge of the picture
     area_px: float
 
-    def whole(self, min_roundness: float = 0.72) -> bool:
+    def whole(self, min_roundness: float = WHOLE_ROUNDNESS) -> bool:
         """A ball seen whole: round, and not cut off by the picture's edge."""
         return self.roundness >= min_roundness and not self.cut_off
 
@@ -102,21 +107,35 @@ def orange_mask(image_bgr: np.ndarray, colour: BallColour = BallColour()) -> np.
 
 
 def _patches(mask: np.ndarray, floor_area: float, scale: float) -> list[Blob]:
-    """Connected patches of a mask as blobs, largest first, in pixels ``scale`` times the mask's."""
-    count, labels, stats, centres = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    """Patches of a mask as blobs, largest first, in pixels ``scale`` times the mask's.
+
+    Each patch is taken as its outline filled in, so a hole inside it does not count
+    against it: the lit side of the real ball is blown out to white, which is not the
+    ball's colour, and leaves one.
+
+    Roundness is the share of the patch inside the circle of the patch's own area about
+    its centre. An earlier version compared the area with the smallest circle around the
+    patch. A few specks of the desk touching the ball were enough to stretch that circle,
+    and on the real arm it scored the same resting ball anywhere from 0.59 to 0.86.
+    """
     height, width = mask.shape
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     blobs = []
-    for index in range(1, count):
-        left, top, wide, tall, area = (int(v) for v in stats[index])
+    for contour in contours:
+        left, top, wide, tall = cv2.boundingRect(contour)
+        if wide * tall < floor_area:
+            continue
+        patch = np.zeros((tall, wide), dtype=np.uint8)
+        cv2.drawContours(patch, [contour], -1, 1, thickness=cv2.FILLED, offset=(-left, -top))
+        area = float(patch.sum())
         if area < floor_area:
             continue
-        points = cv2.findNonZero((labels[top : top + tall, left : left + wide] == index).astype(np.uint8))
-        _, enclosing = cv2.minEnclosingCircle(points)
-        # Half a pixel is added because a patch's outline runs through pixel centres.
-        roundness = min(1.0, area / (math.pi * (enclosing + 0.5) ** 2))
+        rows, columns = np.nonzero(patch)
+        u, v = float(columns.mean()) + 0.5, float(rows.mean()) + 0.5  # within the patch's own box
+        radius = math.sqrt(area / math.pi)
+        inside = ((columns + 0.5 - u) ** 2 + (rows + 0.5 - v) ** 2 <= radius * radius).sum()
         cut_off = left <= 0 or top <= 0 or left + wide >= width or top + tall >= height
-        blob = Blob(float(centres[index][0]) + 0.5, float(centres[index][1]) + 0.5, math.sqrt(area / math.pi),
-                    float(roundness), bool(cut_off), float(area))
+        blob = Blob(left + u, top + v, radius, float(inside / area), bool(cut_off), area)
         blobs.append(blob.scaled(scale))
     return sorted(blobs, key=lambda blob: -blob.area_px)
 
@@ -192,24 +211,32 @@ def learn_colour(image_bgr: np.ndarray, ball: Blob, base: BallColour = BallColou
 
     Takes the hue, saturation and brightness of the pixels well inside the ball
     and allows a margin around them, so the ball's shaded side is still its colour.
+
+    Pixels the camera has blown out are left aside. The lit side of the real ball goes
+    pale yellow to white, and a colour test wide enough to take that in also takes in a
+    beige desk; on the real arm that is what stopped the ball being recognised after it
+    was moved. The blown-out part is still found, as the inside of the ball's outline.
     """
     hue, saturation, value = colour_parts(image_bgr, base)
     rows, columns = np.mgrid[0 : image_bgr.shape[0], 0 : image_bgr.shape[1]]
     inside = (columns + 0.5 - ball.u) ** 2 + (rows + 0.5 - ball.v) ** 2 <= (0.85 * ball.radius_px) ** 2
     if int(inside.sum()) < 50:
         raise ValueError("the ball is too small in the picture to learn its colour from")
-    hues = hue[inside]
+    exposed = inside & (np.max(image_bgr, axis=2) < BLOWN_OUT)
+    if int(exposed.sum()) < 0.2 * int(inside.sum()):
+        exposed = inside  # nearly all of it is blown out: there is nothing better to learn from
+    hues = hue[exposed]
     middle = float(np.median(hues))
-    low, high = (float(v) for v in np.percentile(hues, [3, 97]))
+    low, high = (float(v) for v in np.percentile(hues, [5, 95]))
     if high - low > 70.0:
         raise ValueError("the patch has no one colour; it is probably not the ball")
     return replace(
         base,
-        hue_low=min(low, middle - 6.0) - 6.0,
-        hue_high=max(high, middle + 6.0) + 6.0,
-        saturation_min=max(0.12, 0.6 * float(np.percentile(saturation[inside], 5))),
+        hue_low=min(low, middle - 6.0) - 5.0,
+        hue_high=max(high, middle + 6.0) + 5.0,
+        saturation_min=max(0.12, 0.7 * float(np.percentile(saturation[exposed], 10))),
         # The floor on brightness is kept low: a ball in the arm's shadow is far darker than a lit one.
-        value_min=max(0.05, 0.25 * float(np.percentile(value[inside], 3))),
+        value_min=max(0.05, 0.25 * float(np.percentile(value[exposed], 3))),
     )
 
 
