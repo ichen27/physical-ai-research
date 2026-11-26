@@ -20,6 +20,7 @@ This is an early project. Read this section before relying on anything.
 | Trained pickup policy | Holds the ball in two simulators. **Not yet tried on a real arm.** See [results](results/pickup/2026-11-24-claw/README.md) |
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
 | Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm it has picked the ball up once, with speed limits, after a failed first attempt (see [Real arm](#real-arm)) |
+| Carrying the ball to a bowl and dropping it in | A fixed move after the pickup, measured **in MuJoCo only**: every ball lifted ended in the bowl. Not run on the real arm (see [Carrying the ball to a bowl](#carrying-the-ball-to-a-bowl)) |
 | Locating the ball with the camera on the wrist | Detector, calibration and pickup written and tested on saved pictures and in MuJoCo. **On the real arm only the read-only `look` step has run**: the camera is not yet calibrated there and no real pickup has used it (see [Wrist camera](#wrist-camera)) |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -53,6 +54,8 @@ Known limitations:
 | `understudy/camera_collect.py` | Has the arm take those pictures itself: notices the ball, learns its colour, chooses the poses |
 | `understudy/camera_feed.py` | Pictures from the real camera, by name, and from no other camera |
 | `understudy/seek.py` | Looks for the ball and turns the arm to face it |
+| `understudy/carry.py` | After the pickup: carries the ball to a bowl at the side and drops it in. A fixed, slow move, not a learnt one |
+| `understudy/sim_bowl.py` | A bowl for the simulated desk that the ball can land in and the gripper can strike |
 | `understudy/sim_urdf.py` | Generates the corrected URDF used in simulation |
 | `scripts/build_finger_collision.py` | Builds the fingers' collision shapes as convex pieces that keep their claw shape |
 | `scripts/isaaclab_run.py` | Runs Isaac Lab's train and play scripts with this project's task registered |
@@ -61,6 +64,7 @@ Known limitations:
 | `scripts/evaluate.py` | Scores a trained reach policy on thousands of reaches and exports it |
 | `scripts/evaluate_pickup.py` | Scores a trained pickup policy on thousands of attempts and exports it |
 | `scripts/mujoco_pickup.py` | Runs a pickup policy in MuJoCo on the vendor's model, with no GPU |
+| `scripts/mujoco_carry.py` | Measures the carry in MuJoCo: how often the ball ends in the bowl, and whether anything touches it |
 | `scripts/mujoco_camera_calibration.py` | Runs the wrist camera's calibration procedure in MuJoCo and checks the result |
 | `scripts/camera_watch.sh` | Left running in Terminal on the Mac the camera is plugged into; takes a picture when asked |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
@@ -216,9 +220,9 @@ The camera rides on the gripper and looks along it, so from the start pose it se
   | Rising from the start pose to the look pose, facing straight ahead | Up to 22 cm ahead of the swivel axis and 11 cm behind it, 6 cm to each side, 14 to 33 cm above the desk |
   | Looking, at any swivel from 57 degrees left to 57 right | Everything within 14 cm of the swivel axis, all the way round (the elbow is 11 cm out behind), from 9 to 33 cm above the desk. The gripper tip is 13 cm out and 23 cm up |
   | Coming down to the start pose, facing the ball | Up to 22 cm out in the ball's direction, 6 cm to each side of it, 14 cm or more above the desk |
-  | The pickup | Down to the desk at the ball and out to about 28 cm in its direction, the open fingers 12 cm wide |
+  | The pickup | Down to the desk at the ball and out to about 28 cm from the swivel axis, the open fingers 12 cm wide. **Not only in the ball's direction:** to take the ball the arm turns up to 11 degrees to the left of where it faces, and as it lifts it swings up to 42 degrees to the right with the gripper still under 11 cm, before coming back to hold the ball 10 to 16 cm up. Measured over thousands of simulated pickups with the speed limits; the one real pickup also drifted 11 cm to the right and rolled its wrist, which was put down at the time to the tool not recognising the hold |
 
-  In practice: nothing but the ball within 30 cm of the swivel axis anywhere in front of the arm, out to about 80 degrees either side, and nothing within 15 cm of the swivel axis on any side up to 40 cm.
+  In practice: nothing but the ball within 30 cm of the swivel axis from about 80 degrees to the arm's left all the way round to directly at its right (a ball 57 degrees to the right is lifted with a swing towards 99, where the swivel stops at 90), and nothing within 15 cm of the swivel axis on any side up to 40 cm. An earlier version of this table gave the pickup only the ball's own direction; that was wrong, and was found when a simulated bowl was stood beside the ball's line and struck. The one thing that may stand inside this space is the bowl the ball is carried to, in the place [Carrying the ball to a bowl](#carrying-the-ball-to-a-bowl) gives.
 
 macOS lets a program use a camera only if the person at the computer started it, so there are two ways to get pictures, and both open the arm's camera by name and never another one (a laptop's own camera, a phone's):
 
@@ -256,6 +260,29 @@ That ties the camera to where the gripper is when it is down at the desk, which 
 
 `camera-collect` moves the arm with the gripper raised: by the arm's model the tip never comes within 7 cm of the desk, and no joint is asked to turn faster than 0.25 rad/s (14 degrees a second). While it works out a camera between poses it keeps reading the servos, whose watchdog would otherwise cut power and drop the arm. `camera-fit` refuses to save a camera whose answers for a ball that did not move are spread wider than 8 mm, or when a clearly different camera explains the pictures nearly as well. `run --camera` stops before the pickup, and lowers the arm, if it does not see the ball or the ball is outside the distances the policy lifts from.
 
+### Carrying the ball to a bowl
+
+**Status: built and measured in MuJoCo only. It has not run on the real arm, and no real bowl has been measured.** [results/carry/2026-11-26-bowl](results/carry/2026-11-26-bowl/README.md) has the measurements, a clip of one simulated attempt, which bowl to use and where to stand it.
+
+After the pickup the arm can carry the ball to a bowl at its side and drop it in (`understudy/carry.py`). This is a fixed, slow move, not a learnt one: once the ball is in the gripper and the bowl's place is given there is nothing left to find out. It is the same whoever picked the ball up. The arm raises the ball to a compact carrying pose, swivels to the bowl, moves out over its middle with the ball 6 cm above the rim, lowers it straight down to 1 cm above the rim, opens the gripper gradually, rises straight up again and returns. The fingers never go below the rim. No joint is asked to turn faster than 14 degrees a second, and a carry takes about a minute.
+
+It does not start unless the fingers say they are holding something that has been lifted, and it stops at once, with the arm left raised where it is, if the fingers close fully, which means the ball was lost. A bowl out of reach, further round than the swivel goes, or closer to the arm than 10 cm at its near edge is refused before anything is powered.
+
+**The bowl goes on the arm's left.** The pickup sweeps more than the line to the ball (see the table above): lifting, it swings up to 42 degrees to its right. A pickup is refused when the bowl's edge is within 9 cm of anywhere the arm goes for that ball, and a ball already in the bowl is refused too. With a 15 cm bowl directly at the arm's left, its middle 26 cm from the swivel axis, balls from 57 degrees right to 38 degrees left can still be picked up; the same bowl on the right leaves only those from 5 degrees right to 57 left.
+
+Say where the bowl is with two readings of `where`, the arm limp: x and y with the gripper's tip held over the middle of the bowl, then x, y and z with the tip resting on its rim.
+
+```sh
+python scripts/real_arm.py where     # tip over the middle of the bowl: note x and y
+python scripts/real_arm.py where     # tip resting on the rim: note x, y and z
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look \
+    --bowl 0.0 0.26 0.0 0.185 0.065 --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: find, pick up, carry, drop in
+```
+
+`--set_down BEARING_DEG DISTANCE_CM` puts the ball down on the bare desk instead. Both are off unless given.
+
+In MuJoCo, with the pickup told where the ball is, the real arm's speed limits and a free-standing 400 g bowl: of 198 balls lifted in 200 attempts, all 198 ended in the bowl and were still there a second later, and neither the arm nor the held ball touched the bowl. The same held for openings from 8 to 18 cm, rims from 3 to 10 cm, a ball that bounces back half the height it fell, and a bowl standing up to 3 cm from where the carry was told. Balls begin to miss only when the bowl is so far out of place that the ball is let go over its rim.
+
 ### Calibration file
 
 `understudy.arm.Calibration` maps a real arm's encoder readings to the model's joint angles. `scripts/real_arm.py fit-touches` writes it to `calibration.local.json`, which is not committed because it belongs to one physical arm:
@@ -282,6 +309,7 @@ This runs the unit tests and compiles every Python file. The tests include the b
 | [Ball pickup, first policy, 2026-11-24](results/pickup/2026-11-24-first/README.md) | First pickup policy, identical simulated arms | Video and still frames, exported policy, training checkpoint, run settings, training curves, seven evaluation files |
 | [Ball pickup with claw-shaped fingers, 2026-11-24](results/pickup/2026-11-24-claw/README.md) | Current pickup policy, holds the ball in two simulators | MuJoCo video and still frames, exported policy and its interface file, eleven MuJoCo evaluation files. The training checkpoint is on a stopped rented machine |
 | [Wrist camera, 2026-11-25](results/camera/2026-11-25-wrist-camera/README.md) | Picking the ball up from where the wrist camera sees it, in MuJoCo. Not yet on the real arm | Twenty-nine MuJoCo measurement files for the pickup (fourteen conditions and fifteen distances), four for the calibration procedure, one rendered wrist picture |
+| [Carrying the ball to a bowl, 2026-11-26](results/carry/2026-11-26-bowl/README.md) | After the pickup: carry to a bowl at the side and drop the ball in, in MuJoCo. Not on the real arm | MuJoCo video and still frames, fifty measurement files (bowl size, rim height, bounce, misplaced bowl, release height, speed, bare desk) |
 | [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Earlier pickup policy, which dropped the ball in the second simulator | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
 
 ## Contributing
