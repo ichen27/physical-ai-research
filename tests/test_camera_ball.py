@@ -202,7 +202,55 @@ class SeekTests(unittest.TestCase):
     def test_reports_no_ball_when_there_is_none(self):
         jump, facing = self.seek(None)
         self.assertIsNone(facing)
-        self.assertEqual(len(jump.moves), len(seek.SCAN) - 1)
+        self.assertEqual(len(jump.moves), len(seek.SCAN))  # up to the look pose, then once for each further look
+        # It is left raised in the look pose, where it last looked from.
+        last = ODD.to_rad(jump.positions[:5])
+        for angle, wanted in zip(last, (seek.SCAN[-1], *seek.LOOK_POSE[1:])):
+            self.assertAlmostEqual(angle, wanted, delta=0.002)
+
+    def test_the_ball_is_looked_for_from_the_raised_pose_and_every_move_is_slow_and_clear_of_the_desk(self):
+        from understudy import camera_collect
+
+        looked_from = []
+        jump = JumpArm(ODD)
+
+        def look():
+            looked_from.append(jump.angles())
+            return vision.find_blobs(painted(CAMERA, jump.angles(), [(0.2, -0.1)]))
+
+        facing = seek.face_ball(jump, ODD, CAMERA, look, say=lambda _: None)
+        self.assertIsNotNone(facing)
+        for angles in looked_from:  # every look is from the look pose, swivelled or not
+            for angle, wanted in zip(angles[1:], seek.LOOK_POSE[1:]):
+                self.assertAlmostEqual(angle, wanted, delta=0.002)
+        self.assertAlmostEqual(looked_from[0][0], 0.0, delta=0.002)
+        self.assertAlmostEqual(looked_from[-1][0], facing.turn_rad, delta=0.08)  # the last look faces the ball
+        previous = list(pickup.START_POSE)
+        for ticks, seconds in jump.moves:
+            pose = ODD.to_rad(ticks[:5])
+            self.assertTrue(camera_collect.path_is_clear(previous, pose, sim_rig.CHAIN))
+            self.assertGreaterEqual(sim_rig.CHAIN.tip_position(pose)[2], 0.12)
+            self.assertLessEqual(1.5 * max(abs(a - b) for a, b in zip(pose, previous)) / seconds,
+                                 camera_collect.MAX_JOINT_SPEED + 0.01)
+            self.assertEqual(ticks[5], ODD.finger_to_ticks(pickup.GRIPPER_OPEN_RAD))
+            previous = pose
+
+    def test_the_look_pose_shows_what_the_start_pose_cannot(self):
+        # A camera like the first real arm's: a 67-degree lens just behind and above the gripper tip,
+        # looking almost straight down from the start pose.
+        narrow = WristCamera(1280, 720, 975.0, (640.0, 360.0), 0.0, (-0.045, -0.001, 0.029), (2.545, -2.557, 1.366))
+        whole = {"start": 0, "look": 0}
+        places = [(runner.SWIVEL_AXIS_X_M + d * math.cos(b), d * math.sin(b))
+                  for d in (0.15, 0.17, 0.19, 0.21, 0.23) for b in (-0.5, -0.25, 0.0, 0.25, 0.5)]
+        for ball in places:
+            whole["start"] += narrow.sight((*ball, R), pickup.START_POSE, sim_rig.CHAIN).inside
+            whole["look"] += narrow.sight((*ball, R), seek.LOOK_POSE, sim_rig.CHAIN).inside
+        self.assertEqual(whole["look"], len(places))
+        self.assertLess(whole["start"], 0.6 * len(places))
+        # And with that camera a ball 23 cm out, which the start pose cuts off, is found and faced.
+        jump, facing = self.seek((0.21, 0.05), camera=narrow)
+        self.assertAlmostEqual(facing.distance_m, math.hypot(0.21 - runner.SWIVEL_AXIS_X_M, 0.05), delta=0.004)
+        self.assertAlmostEqual(facing.ball[1], runner.AIM_LEFT_M, delta=0.003)
 
     def test_says_when_the_ball_is_out_of_reach(self):
         _, facing = self.seek((0.12, 0.0))
