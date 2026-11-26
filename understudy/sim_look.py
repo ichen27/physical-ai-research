@@ -187,6 +187,7 @@ class Scene:
         self._gains = np.ones(3, dtype=np.float32)
         self._veil_colour = np.full(3, 200.0, dtype=np.float32)
         self._noise = np.random.default_rng(0)
+        self._drift = np.ones(4)  # exposure, then blue, green and red, as they have wandered since the look began
         self._late: list[tuple[np.ndarray, float]] = []
 
     def close(self) -> None:
@@ -256,7 +257,7 @@ class Scene:
 
         # Ball: orange through coral, deep to pale. On the real camera the foam ball reads pale and
         # bright, almost glowing, even in the arm's shadow, so it is given some light of its own.
-        model.mat_rgba[self._ball_material] = [*_colour(rng, (0, 36), (0.3, 1.0), (0.75, 1.0)), 1.0]
+        model.mat_rgba[self._ball_material] = [*_colour(rng, (0, 36), (0.25, 1.0), (0.75, 1.0)), 1.0]
         model.mat_emission[self._ball_material] = rng.choice((0.0, rng.uniform(0.0, 0.45)))
         model.geom_friction[self._ball_geom][0] = rng.uniform(0.7, 1.2)
         model.body_mass[self._ball_body] = rng.uniform(0.004, 0.008)
@@ -311,7 +312,7 @@ class Scene:
         mujoco.mj_forward(model, self.sim.data)
 
         # What the camera and its lens do to the picture afterwards.
-        veil = rng.choice((0.0, rng.uniform(0.0, 0.45)))
+        veil = rng.choice((0.0, rng.uniform(0.0, 0.5), rng.uniform(0.15, 0.5)))
         grey = rng.uniform(150, 235)
         self._veil_colour = np.array([grey + rng.uniform(-12, 12) for _ in range(3)], dtype=np.float32)
         # Exposure runs from dim to well over: the real camera blows out the ball's lit side and
@@ -325,6 +326,7 @@ class Scene:
         self.look = Look(camera, pattern, veil, rng.choice((0.0, rng.uniform(0.0, 1.6))), rng.uniform(0.0, 7.0), glare,
                          rng.randint(0, 3))
         self._late = []
+        self._drift = np.ones(4)
         return self.look
 
     def _lens_maps(self, camera: WristCamera, scale: float) -> tuple[np.ndarray, np.ndarray]:
@@ -353,8 +355,15 @@ class Scene:
         look, data = self.look, self.sim.data
         self._renderer.update_scene(data, camera=self._camera)
         image = cv2.remap(self._renderer.render(), self._maps[0], self._maps[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-        image = image.astype(np.float32) * self._gains + self._glare
-        image = image * (1.0 - look.veil) + self._veil_colour * look.veil
+        # In this order, as in a camera: the veil is light scattered in the lens, so it is added
+        # before the sensor's exposure, and only then does anything too bright clip at white. The
+        # other order (exposure, then veil) cannot make what the real camera shows of the ball,
+        # red blown out and blue lifted to half way at once, and a student trained on it did not
+        # recognise the real ball in any of 19 real pictures.
+        image = image.astype(np.float32) * (1.0 - look.veil) + self._veil_colour * look.veil
+        # The real camera sets its own exposure and white balance and they wander from picture to picture.
+        self._drift = np.clip(self._drift * np.exp(self._noise.normal(0.0, [0.02, 0.008, 0.008, 0.008])), 0.85, 1.18)
+        image = image * (self._gains * self._drift[0] * self._drift[1:]) + self._glare
         if look.blur > 0.05:
             image = cv2.GaussianBlur(image, (0, 0), look.blur)
         if look.noise > 0.05:
