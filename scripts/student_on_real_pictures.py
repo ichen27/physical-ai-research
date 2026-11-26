@@ -9,9 +9,9 @@ the ball sat still while the arm looked at it from about twenty poses, twice:
     python scripts/student_on_real_pictures.py --student results/student/<name>/student.pt \
         --sightings sightings.local.json --calibration calibration.local.json --shots ~/understudy-camera/shots
 
-Each saved picture is matched to its recorded sighting by finding the ball in it again with
-the hand-written detector; the ball's true place is the one the calibration fitted for that
-resting place. Nothing is read from the arm and nothing moves.
+Each recorded sighting is paired with the saved picture it came from by finding the ball again
+in every picture with the hand-written detector; the ball's true place is the one the
+calibration fitted for that resting place. Nothing is read from the arm and nothing moves.
 
 With pictures and no known ball position, it only prints what the student says:
 
@@ -46,25 +46,40 @@ def readings_for(angles: list[float], finger: float = pickup.GRIPPER_OPEN_RAD) -
     return readings
 
 
-def matched(sightings: list, shots: Path, colour: vision.BallColour) -> list[tuple[Path, object]]:
-    """Each saved picture that a recorded sighting was taken from, with that sighting.
+MATCH_PX = 10.0  # a picture belongs to a sighting if the ball is found this close to where the sighting has it
 
-    A sighting records where the detector found the ball, to a fraction of a pixel, and the
-    same detector on the same picture finds it in the same place. That is the match.
+
+def matched(sightings: list, shots: Path, colour: vision.BallColour) -> list[tuple[Path, object]]:
+    """Each recorded sighting with the saved picture it was taken from.
+
+    A sighting records where the detector found the ball. Finding the ball again in every
+    saved picture and taking, for each sighting, the picture that has it nearest (within
+    ``MATCH_PX``, and the same size to a tenth) pairs them up: sightings from different
+    poses have the ball in different places. Not an exact match, because the detector has
+    changed a little since some sightings were recorded. Each picture is used once.
     """
-    pairs, left = [], list(sightings)
+    found = []
     for path in sorted(shots.glob("*.jpg")):
         try:
             blobs = vision.find_blobs(vision.decode(path.read_bytes()), colour)
         except ValueError:
             continue
-        for blob in blobs:
-            hit = next((s for s in left if abs(s.u - blob.u) < 0.01 and abs(s.v - blob.v) < 0.01), None)
-            if hit is not None:
-                pairs.append((path, hit))
-                left.remove(hit)
-                break
-    return pairs
+        found += [(path, blob) for blob in blobs if blob.whole()]
+    candidates = sorted(
+        (math.hypot(s.u - blob.u, s.v - blob.v), index, path)
+        for index, s in enumerate(sightings) for path, blob in found
+        if abs(blob.radius_px / s.radius_px - 1.0) < 0.1
+    )
+    pairs, used_sightings, used_pictures = {}, set(), set()
+    for distance, index, path in candidates:
+        if distance > MATCH_PX:
+            break
+        if index in used_sightings or path in used_pictures:
+            continue
+        pairs[index] = path
+        used_sightings.add(index)
+        used_pictures.add(path)
+    return [(pairs[index], sightings[index]) for index in sorted(pairs)]
 
 
 def score_calibration_pictures(brain: student.Brain, args) -> dict:
