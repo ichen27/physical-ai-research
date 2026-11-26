@@ -445,15 +445,32 @@ def cmd_camera_fit(args) -> None:
     notes = camera_calibration.load_notes(args.sightings)
     if not sightings:
         raise SystemExit(f"no sightings in {args.sightings}; run camera-collect first")
+    size = (int(notes.get("width", 1280)), int(notes.get("height", 720)))
+    numbers = sorted({s.place for s in sightings})
+    known = {}
+    for printed, x, y in args.known or []:
+        if not 1 <= int(printed) <= len(numbers) or printed != int(printed):
+            raise SystemExit(f"--known {printed:g}: the places are numbered 1 to {len(numbers)}")
+        known[numbers[int(printed) - 1]] = (x, y)
     try:
-        fit = camera_calibration.fit(sightings, calibration, int(notes.get("width", 1280)), int(notes.get("height", 720)))
+        fit = camera_calibration.fit(sightings, calibration, *size, known=known)
+        alone = camera_calibration.fit(sightings, calibration, *size) if known else fit
     except ValueError as error:
         raise SystemExit(str(error)) from None
     camera = fit.camera
     for place, (x, y) in enumerate(fit.places):
-        errors = [e for s, e in zip(sightings, fit.desk_errors_m) if s.place == sorted({s.place for s in sightings})[place]]
-        print(f"  place {place + 1}: ball at x={x:.3f} y={y:.3f}, seen from {len(errors)} poses; they disagree by "
-              f"{1000 * (sum(e * e for e in errors) / len(errors)) ** 0.5:.1f} mm typically, {1000 * max(errors):.1f} mm at worst")
+        errors = [e for s, e in zip(sightings, fit.desk_errors_m) if s.place == numbers[place]]
+        told = numbers[place] in known
+        print(f"  place {place + 1}: ball {'known to be' if told else 'at'} x={x:.3f} y={y:.3f}, seen from {len(errors)} poses; "
+              f"they {'put it' if told else 'disagree by'} {1000 * (sum(e * e for e in errors) / len(errors)) ** 0.5:.1f} mm "
+              f"{'from there ' if told else ''}typically, {1000 * max(errors):.1f} mm at worst")
+        if told:
+            guess = alone.places[place]
+            print(f"      the pictures alone would have put it at x={guess[0]:.3f} y={guess[1]:.3f}, "
+                  f"{1000 * math.dist(guess, (x, y)):.0f} mm away: that much was wrong with the arm's idea of where its raised camera is")
+    if not known:
+        print("  No place's position was given (--known). The camera then agrees with itself but is only as true as the arm's\n"
+              "  joint zeros with the arm raised; on the first real arm that left it reading 1 cm short. See the README.")
     print(f"focal length {camera.focal_px:.0f} pixels (field of view {2 * math.degrees(math.atan(camera.width / 2 / camera.focal_px)):.0f} "
           f"degrees across); picture centre {camera.centre_px[0]:.0f}, {camera.centre_px[1]:.0f}; distortion {camera.distortion:+.3f}"
           + ("" if fit.fitted_lens else " (centre and distortion left at their defaults)"))
@@ -470,6 +487,7 @@ def cmd_camera_fit(args) -> None:
         raise SystemExit(f"not saved: the typical error must be under {args.max_error_mm:g} mm and the answer unambiguous.")
     camera.save(args.camera_file, colour=notes.get("colour"), desk_rms_mm=round(fit.desk_rms_m * 1000, 2),
                 pixel_rms=round(fit.pixel_rms, 2), sightings=len(sightings), places=len(fit.places),
+                known_places={str(numbers.index(number) + 1): list(xy) for number, xy in known.items()},
                 fitted=time.strftime("%Y-%m-%d %H:%M:%S"))
     print(f"saved {args.camera_file}")
 
@@ -658,6 +676,10 @@ def main() -> None:
     collect.set_defaults(run=cmd_camera_collect)
     camera_fit = commands.add_parser("camera-fit", help="Work out the wrist camera from the collected sightings.")
     camera_fit.add_argument("--max_error_mm", type=float, default=MAX_CAMERA_ERROR_MM)
+    camera_fit.add_argument("--known", type=float, nargs=3, action="append", metavar=("PLACE", "X", "Y"),
+                            help="Where the ball was at one of the places (1 for the first), metres in the arm's frame: "
+                            "rest the closed gripper tip on the spot and run 'where' before putting the ball there. "
+                            "May be given for each place. Ties the camera to where the gripper is at the desk.")
     camera_fit.set_defaults(run=cmd_camera_fit)
     run = commands.add_parser("run", help="Run the pickup policy.")
     run.add_argument("--policy", required=True)

@@ -234,6 +234,14 @@ python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.on
     --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: the same, then picks it up
 ```
 
+**Tell `camera-fit` where the ball was, if you can.** With nothing known, the fit puts the camera and the ball wherever the pictures agree, in the arm model's frame *with the arm raised*. That frame is only as true as the arm's joint zeros, and touches of the desk leave them loose by degrees. On the author's arm the fitted camera agreed with itself to 2 mm over three resting places and still put a ball 1 cm nearer than a ruler did (18.4 cm against 19.5); fitting the joint zeros along with the camera moved the wrist's by 4 degrees for 1 mm of extra touch error. More pictures do not help. A known ball position does: before putting the ball down, rest the closed gripper tip on the spot and run `where`, then give that to the fit:
+
+```sh
+python scripts/real_arm.py camera-fit --known 1 0.190 0.053     # place 1's ball was at x=0.190 y=0.053; repeat --known for place 2
+```
+
+That ties the camera to where the gripper is when it is down at the desk, which is what a pickup needs. On a simulated arm with its wrist zero 4 degrees out, the error on balls it had not seen fell from 12 mm to about 5 over poses all round the start pose, and to about 2 from the start and look poses themselves. This has not yet been done on the real arm.
+
 `camera-collect` moves the arm with the gripper raised: by the arm's model the tip never comes within 7 cm of the desk, and no joint is asked to turn faster than 0.25 rad/s (14 degrees a second). While it works out a camera between poses it keeps reading the servos, whose watchdog would otherwise cut power and drop the arm. `camera-fit` refuses to save a camera whose answers for a ball that did not move are spread wider than 8 mm, or when a clearly different camera explains the pictures nearly as well. `run --camera` stops before the pickup, and lowers the arm, if it does not see the ball or the ball is outside the distances the policy lifts from.
 
 ### Calibration file
