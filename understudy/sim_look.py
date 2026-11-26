@@ -54,6 +54,14 @@ MOUNT_TURN_RAD = math.radians(1.5)
 FOCAL_SPREAD = 0.04
 CENTRE_SPREAD = 0.02  # of the picture's width
 DISTORTION_RANGE = (-0.05, 0.01)
+# How the real camera shows the ball. In 21 pictures from the first real session its red was at 255 in every one,
+# its green between 159 and 201 and its blue between 117 and 138: a pale peach, nothing like the orange the ball
+# is. The camera overexposes it and its processing then lifts the weaker colours. In this share of looks the ball
+# is shown that way, with a spread about three times as wide as was seen, for other rooms, lamps and times of day.
+SHOWN_AS_THE_CAMERA_SHOWS = 0.8
+SHOWN_GREEN, SHOWN_BLUE = (120.0, 187.0, 250.0), (60.0, 133.0, 200.0)  # least, commonest (the real median), most
+# Other things that would look the same to that camera: this share of the things on the desk get the ball's look too.
+THINGS_SHOWN_LIKE_THE_BALL = 0.2
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,9 @@ class Look:
     noise: float
     glare: float
     latency_steps: int
+    # Things shown as the real camera shows the ball: each a geom and the colour its lit side gets,
+    # red, green, blue, before anything too bright clips at white.
+    shown: tuple = ()
 
 
 def dress(spec: mujoco.MjSpec) -> None:
@@ -270,6 +281,7 @@ class Scene:
         shown = rng.randint(2, DISTRACTORS)
         if not self.clutter:
             shown = 0
+        things_out = shown
         for index, geom in enumerate(self._things):
             if index >= shown:
                 model.geom_pos[geom] = _parked(index)
@@ -323,8 +335,18 @@ class Scene:
         gu, gv = rng.uniform(0, self._width), rng.uniform(-0.2, rng.choice((0.2, 0.6))) * self._height
         su, sv = rng.uniform(0.15, 0.6) * self._width, rng.uniform(0.15, 0.6) * self._height
         self._glare = (glare * 255.0 * np.exp(-(((columns - gu) / su) ** 2 + ((rows - gv) / sv) ** 2)))[..., None]
+        shown = []
+        if rng.random() < SHOWN_AS_THE_CAMERA_SHOWS:
+            green = rng.triangular(SHOWN_GREEN[0], SHOWN_GREEN[2], SHOWN_GREEN[1])
+            blue = min(rng.triangular(SHOWN_BLUE[0], SHOWN_BLUE[2], SHOWN_BLUE[1]), green - 15.0)
+            # Red is over the top in most looks, as it is in every real picture so far, and just under it in the rest.
+            red = 255.0 * rng.uniform(1.0, 2.2) if rng.random() < 0.8 else rng.uniform(200.0, 255.0)
+            shown.append((self._ball_geom, (red, green, blue)))
+            for geom in self._things[:things_out]:
+                if rng.random() < THINGS_SHOWN_LIKE_THE_BALL:
+                    shown.append((geom, (red * rng.uniform(0.8, 1.2), green * rng.uniform(0.8, 1.2), blue * rng.uniform(0.8, 1.2))))
         self.look = Look(camera, pattern, veil, rng.choice((0.0, rng.uniform(0.0, 1.6))), rng.uniform(0.0, 7.0), glare,
-                         rng.randint(0, 3))
+                         rng.randint(0, 3), tuple(shown))
         self._late = []
         self._drift = np.ones(4)
         return self.look
@@ -364,6 +386,18 @@ class Scene:
         # The real camera sets its own exposure and white balance and they wander from picture to picture.
         self._drift = np.clip(self._drift * np.exp(self._noise.normal(0.0, [0.02, 0.008, 0.008, 0.008])), 0.85, 1.18)
         image = image * (self._gains * self._drift[0] * self._drift[1:]) + self._glare
+        self._segments.update_scene(data, camera=self._camera)
+        segments = self._segments.render()
+        geoms = np.where(segments[..., 1] == int(mujoco.mjtObj.mjOBJ_GEOM), segments[..., 0], -1).astype(np.float32)
+        geoms = cv2.remap(geoms, self._maps[0], self._maps[1], cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=-1)
+        for geom, colour in look.shown:
+            # The thing keeps its light and shade and takes the colour the real camera gives the ball.
+            where = geoms == geom
+            if where.sum() < 4:
+                continue
+            light = image[where] @ np.array([0.3, 0.59, 0.11], dtype=np.float32)
+            light = np.clip(light / max(float(np.percentile(light, 85)), 1.0), 0.25, 1.3)
+            image[where] = light[:, None] * np.array(colour, dtype=np.float32)
         if look.blur > 0.05:
             image = cv2.GaussianBlur(image, (0, 0), look.blur)
         if look.noise > 0.05:
@@ -371,10 +405,7 @@ class Scene:
         image = np.clip(image, 0, 255).astype(np.uint8)
         small = cv2.resize(image, (PICTURE_WIDTH, PICTURE_HEIGHT), interpolation=cv2.INTER_AREA)
 
-        self._segments.update_scene(data, camera=self._camera)
-        segments = self._segments.render()
-        ball = ((segments[..., 0] == self._ball_geom) & (segments[..., 1] == int(mujoco.mjtObj.mjOBJ_GEOM))).astype(np.uint8)
-        seen = float(cv2.remap(ball, self._maps[0], self._maps[1], cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT).sum())
+        seen = float((geoms == self._ball_geom).sum())
         sight = look.camera.sight(self.sim.ball(), self.sim.joint_angles()[:5], self._chain)
         whole = math.pi * (sight.radius_px * self._width / look.camera.width) ** 2 if sight is not None else 0.0
         visible = min(1.0, seen / whole) if whole > 1.0 else 0.0

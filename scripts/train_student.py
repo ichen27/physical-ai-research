@@ -69,6 +69,9 @@ def main() -> None:
     parser.add_argument("--length", type=int, default=48, help="Steps in each run.")
     parser.add_argument("--view_batch", type=int, default=256)
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--input", choices=list(student.INPUTS), default="colour",
+                        help="What the network is shown of each picture: the colour picture, only which pixels are the "
+                        "ball's colour (a fixed filter), or that beside the picture in grey.")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
     parser.add_argument("--min_free_percent", type=float, default=12.0, help="Stop if the computer's free memory falls below this.")
@@ -89,7 +92,7 @@ def main() -> None:
                     "look_pose": list(dagger.LOOK_POSE)}
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
-    net = student.StudentNet().to(device)
+    net = student.StudentNet(input=args.input).to(device)
     optimiser = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-5)
     sampler = np.random.default_rng(args.seed)
     record = out / "training.jsonl"
