@@ -1,0 +1,1047 @@
+{
+ "record": "live-run-20261127-011102.json",
+ "filter": {
+  "hue_low": 0.0,
+  "hue_high": 55.0,
+  "saturation_min": 0.25,
+  "value_min": 0.22,
+  "veil_max": 90.0
+ },
+ "every_tenth_step": [
+  {
+   "seconds": 0.0,
+   "gripper_open": true,
+   "tip_height_cm": 11.9,
+   "sure": 0.813,
+   "filter_share": 0.046,
+   "filter_share_hue_from_minus_20": 0.048,
+   "ballish_share": 0.038,
+   "ball_rgb": [
+    230,
+    142,
+    117
+   ],
+   "background_rgb": [
+    120,
+    121,
+    121
+   ],
+   "background_saturation": 0.007,
+   "ball_red_at_ceiling": 0.67,
+   "ball_hue_as_the_filter_measures_it": 10.7,
+   "ball_saturation_as_the_filter_measures_it": 0.61
+  },
+  {
+   "seconds": 0.33,
+   "gripper_open": true,
+   "tip_height_cm": 10.7,
+   "sure": 0.867,
+   "filter_share": 0.047,
+   "filter_share_hue_from_minus_20": 0.05,
+   "ballish_share": 0.039,
+   "ball_rgb": [
+    228,
+    145,
+    118
+   ],
+   "background_rgb": [
+    124,
+    125,
+    125
+   ],
+   "background_saturation": 0.006,
+   "ball_red_at_ceiling": 0.66,
+   "ball_hue_as_the_filter_measures_it": 11.1,
+   "ball_saturation_as_the_filter_measures_it": 0.61
+  },
+  {
+   "seconds": 0.67,
+   "gripper_open": true,
+   "tip_height_cm": 10.2,
+   "sure": 0.606,
+   "filter_share": 0.057,
+   "filter_share_hue_from_minus_20": 0.061,
+   "ballish_share": 0.045,
+   "ball_rgb": [
+    235,
+    151,
+    126
+   ],
+   "background_rgb": [
+    125,
+    125,
+    125
+   ],
+   "background_saturation": 0.005,
+   "ball_red_at_ceiling": 0.7,
+   "ball_hue_as_the_filter_measures_it": 10.7,
+   "ball_saturation_as_the_filter_measures_it": 0.61
+  },
+  {
+   "seconds": 1.0,
+   "gripper_open": true,
+   "tip_height_cm": 8.9,
+   "sure": 0.999,
+   "filter_share": 0.099,
+   "filter_share_hue_from_minus_20": 0.104,
+   "ballish_share": 0.09,
+   "ball_rgb": [
+    248,
+    180,
+    142
+   ],
+   "background_rgb": [
+    131,
+    131,
+    131
+   ],
+   "background_saturation": 0.002,
+   "ball_red_at_ceiling": 0.86,
+   "ball_hue_as_the_filter_measures_it": 19.6,
+   "ball_saturation_as_the_filter_measures_it": 0.54
+  },
+  {
+   "seconds": 1.33,
+   "gripper_open": true,
+   "tip_height_cm": 7.0,
+   "sure": 1.0,
+   "filter_share": 0.117,
+   "filter_share_hue_from_minus_20": 0.122,
+   "ballish_share": 0.103,
+   "ball_rgb": [
+    247,
+    175,
+    140
+   ],
+   "background_rgb": [
+    134,
+    134,
+    134
+   ],
+   "background_saturation": 0.003,
+   "ball_red_at_ceiling": 0.85,
+   "ball_hue_as_the_filter_measures_it": 16.8,
+   "ball_saturation_as_the_filter_measures_it": 0.56
+  },
+  {
+   "seconds": 1.67,
+   "gripper_open": true,
+   "tip_height_cm": 4.6,
+   "sure": 1.0,
+   "filter_share": 0.156,
+   "filter_share_hue_from_minus_20": 0.161,
+   "ballish_share": 0.144,
+   "ball_rgb": [
+    243,
+    152,
+    127
+   ],
+   "background_rgb": [
+    128,
+    128,
+    127
+   ],
+   "background_saturation": 0.01,
+   "ball_red_at_ceiling": 0.77,
+   "ball_hue_as_the_filter_measures_it": 10.5,
+   "ball_saturation_as_the_filter_measures_it": 0.6
+  },
+  {
+   "seconds": 2.0,
+   "gripper_open": true,
+   "tip_height_cm": 2.4,
+   "sure": 0.997,
+   "filter_share": 0.318,
+   "filter_share_hue_from_minus_20": 0.325,
+   "ballish_share": 0.296,
+   "ball_rgb": [
+    242,
+    143,
+    121
+   ],
+   "background_rgb": [
+    111,
+    111,
+    108
+   ],
+   "background_saturation": 0.023,
+   "ball_red_at_ceiling": 0.77,
+   "ball_hue_as_the_filter_measures_it": 9.5,
+   "ball_saturation_as_the_filter_measures_it": 0.63
+  },
+  {
+   "seconds": 2.33,
+   "gripper_open": true,
+   "tip_height_cm": -0.0,
+   "sure": 1.0,
+   "filter_share": 0.514,
+   "filter_share_hue_from_minus_20": 0.529,
+   "ballish_share": 0.529,
+   "ball_rgb": [
+    238,
+    130,
+    109
+   ],
+   "background_rgb": [
+    113,
+    113,
+    113
+   ],
+   "background_saturation": 0.007,
+   "ball_red_at_ceiling": 0.62,
+   "ball_hue_as_the_filter_measures_it": 8.8,
+   "ball_saturation_as_the_filter_measures_it": 0.68
+  },
+  {
+   "seconds": 2.67,
+   "gripper_open": false,
+   "tip_height_cm": 0.3,
+   "sure": 0.901,
+   "filter_share": 0.729,
+   "filter_share_hue_from_minus_20": 0.822,
+   "ballish_share": 0.817,
+   "ball_rgb": [
+    184,
+    73,
+    57
+   ],
+   "background_rgb": [
+    133,
+    130,
+    134
+   ],
+   "background_saturation": 0.028,
+   "ball_red_at_ceiling": 0.03,
+   "ball_hue_as_the_filter_measures_it": 6.2,
+   "ball_saturation_as_the_filter_measures_it": 0.8
+  },
+  {
+   "seconds": 3.0,
+   "gripper_open": false,
+   "tip_height_cm": -1.6,
+   "sure": 0.996,
+   "filter_share": 0.692,
+   "filter_share_hue_from_minus_20": 0.757,
+   "ballish_share": 0.757,
+   "ball_rgb": [
+    223,
+    117,
+    99
+   ],
+   "background_rgb": [
+    160,
+    155,
+    156
+   ],
+   "background_saturation": 0.032,
+   "ball_red_at_ceiling": 0.41,
+   "ball_hue_as_the_filter_measures_it": 7.6,
+   "ball_saturation_as_the_filter_measures_it": 0.59
+  },
+  {
+   "seconds": 3.33,
+   "gripper_open": false,
+   "tip_height_cm": -2.5,
+   "sure": 0.997,
+   "filter_share": 0.556,
+   "filter_share_hue_from_minus_20": 0.566,
+   "ballish_share": 0.569,
+   "ball_rgb": [
+    247,
+    145,
+    122
+   ],
+   "background_rgb": [
+    143,
+    141,
+    141
+   ],
+   "background_saturation": 0.016,
+   "ball_red_at_ceiling": 0.78,
+   "ball_hue_as_the_filter_measures_it": 9.7,
+   "ball_saturation_as_the_filter_measures_it": 0.51
+  },
+  {
+   "seconds": 3.67,
+   "gripper_open": false,
+   "tip_height_cm": -2.6,
+   "sure": 0.994,
+   "filter_share": 0.565,
+   "filter_share_hue_from_minus_20": 0.57,
+   "ballish_share": 0.572,
+   "ball_rgb": [
+    246,
+    136,
+    115
+   ],
+   "background_rgb": [
+    142,
+    139,
+    139
+   ],
+   "background_saturation": 0.02,
+   "ball_red_at_ceiling": 0.73,
+   "ball_hue_as_the_filter_measures_it": 8.4,
+   "ball_saturation_as_the_filter_measures_it": 0.55
+  },
+  {
+   "seconds": 4.0,
+   "gripper_open": false,
+   "tip_height_cm": -2.3,
+   "sure": 0.981,
+   "filter_share": 0.565,
+   "filter_share_hue_from_minus_20": 0.57,
+   "ballish_share": 0.572,
+   "ball_rgb": [
+    234,
+    123,
+    98
+   ],
+   "background_rgb": [
+    152,
+    155,
+    156
+   ],
+   "background_saturation": 0.026,
+   "ball_red_at_ceiling": 0.43,
+   "ball_hue_as_the_filter_measures_it": 10.1,
+   "ball_saturation_as_the_filter_measures_it": 0.61
+  },
+  {
+   "seconds": 4.33,
+   "gripper_open": false,
+   "tip_height_cm": -1.7,
+   "sure": 0.991,
+   "filter_share": 0.566,
+   "filter_share_hue_from_minus_20": 0.568,
+   "ballish_share": 0.569,
+   "ball_rgb": [
+    217,
+    112,
+    86
+   ],
+   "background_rgb": [
+    125,
+    132,
+    133
+   ],
+   "background_saturation": 0.067,
+   "ball_red_at_ceiling": 0.15,
+   "ball_hue_as_the_filter_measures_it": 11.0,
+   "ball_saturation_as_the_filter_measures_it": 0.62
+  },
+  {
+   "seconds": 4.67,
+   "gripper_open": false,
+   "tip_height_cm": -1.0,
+   "sure": 0.994,
+   "filter_share": 0.562,
+   "filter_share_hue_from_minus_20": 0.562,
+   "ballish_share": 0.562,
+   "ball_rgb": [
+    196,
+    111,
+    85
+   ],
+   "background_rgb": [
+    91,
+    112,
+    112
+   ],
+   "background_saturation": 0.191,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 13.1,
+   "ball_saturation_as_the_filter_measures_it": 0.58
+  },
+  {
+   "seconds": 5.0,
+   "gripper_open": false,
+   "tip_height_cm": -0.1,
+   "sure": 0.995,
+   "filter_share": 0.553,
+   "filter_share_hue_from_minus_20": 0.553,
+   "ballish_share": 0.55,
+   "ball_rgb": [
+    188,
+    126,
+    102
+   ],
+   "background_rgb": [
+    73,
+    110,
+    111
+   ],
+   "background_saturation": 0.342,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 15.6,
+   "ball_saturation_as_the_filter_measures_it": 0.47
+  },
+  {
+   "seconds": 5.33,
+   "gripper_open": false,
+   "tip_height_cm": 0.7,
+   "sure": 0.978,
+   "filter_share": 0.453,
+   "filter_share_hue_from_minus_20": 0.459,
+   "ballish_share": 0.533,
+   "ball_rgb": [
+    183,
+    134,
+    125
+   ],
+   "background_rgb": [
+    66,
+    109,
+    119
+   ],
+   "background_saturation": 0.44,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 8.3,
+   "ball_saturation_as_the_filter_measures_it": 0.34
+  },
+  {
+   "seconds": 5.67,
+   "gripper_open": false,
+   "tip_height_cm": 1.3,
+   "sure": 0.05,
+   "filter_share": 0.261,
+   "filter_share_hue_from_minus_20": 0.397,
+   "ballish_share": 0.51,
+   "ball_rgb": [
+    181,
+    133,
+    133
+   ],
+   "background_rgb": [
+    69,
+    110,
+    125
+   ],
+   "background_saturation": 0.446,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 0.0,
+   "ball_saturation_as_the_filter_measures_it": 0.29
+  },
+  {
+   "seconds": 6.0,
+   "gripper_open": false,
+   "tip_height_cm": 1.7,
+   "sure": 0.0,
+   "filter_share": 0.009,
+   "filter_share_hue_from_minus_20": 0.315,
+   "ballish_share": 0.412,
+   "ball_rgb": [
+    173,
+    127,
+    134
+   ],
+   "background_rgb": [
+    87,
+    114,
+    136
+   ],
+   "background_saturation": 0.361,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -8.9,
+   "ball_saturation_as_the_filter_measures_it": 0.27
+  },
+  {
+   "seconds": 6.33,
+   "gripper_open": false,
+   "tip_height_cm": 1.9,
+   "sure": 0.0,
+   "filter_share": 0.0,
+   "filter_share_hue_from_minus_20": 0.285,
+   "ballish_share": 0.259,
+   "ball_rgb": [
+    164,
+    122,
+    130
+   ],
+   "background_rgb": [
+    105,
+    121,
+    142
+   ],
+   "background_saturation": 0.261,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -11.7,
+   "ball_saturation_as_the_filter_measures_it": 0.26
+  },
+  {
+   "seconds": 6.67,
+   "gripper_open": false,
+   "tip_height_cm": 1.9,
+   "sure": 0.0,
+   "filter_share": 0.0,
+   "filter_share_hue_from_minus_20": 0.285,
+   "ballish_share": 0.108,
+   "ball_rgb": [
+    148,
+    107,
+    116
+   ],
+   "background_rgb": [
+    112,
+    118,
+    139
+   ],
+   "background_saturation": 0.193,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -12.6,
+   "ball_saturation_as_the_filter_measures_it": 0.28
+  },
+  {
+   "seconds": 7.0,
+   "gripper_open": false,
+   "tip_height_cm": 3.6,
+   "sure": 0.0,
+   "filter_share": 0.0,
+   "filter_share_hue_from_minus_20": 0.261,
+   "ballish_share": 0.06,
+   "ball_rgb": [
+    134,
+    94,
+    104
+   ],
+   "background_rgb": [
+    110,
+    113,
+    136
+   ],
+   "background_saturation": 0.19,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -13.2,
+   "ball_saturation_as_the_filter_measures_it": 0.3
+  },
+  {
+   "seconds": 7.33,
+   "gripper_open": false,
+   "tip_height_cm": 5.4,
+   "sure": 0.0,
+   "filter_share": 0.0,
+   "filter_share_hue_from_minus_20": 0.261,
+   "ballish_share": 0.078,
+   "ball_rgb": [
+    122,
+    82,
+    91
+   ],
+   "background_rgb": [
+    106,
+    111,
+    135
+   ],
+   "background_saturation": 0.22,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -12.7,
+   "ball_saturation_as_the_filter_measures_it": 0.38
+  },
+  {
+   "seconds": 7.67,
+   "gripper_open": false,
+   "tip_height_cm": 9.0,
+   "sure": 0.0,
+   "filter_share": 0.0,
+   "filter_share_hue_from_minus_20": 0.257,
+   "ballish_share": 0.111,
+   "ball_rgb": [
+    125,
+    85,
+    94
+   ],
+   "background_rgb": [
+    103,
+    113,
+    138
+   ],
+   "background_saturation": 0.254,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -12.5,
+   "ball_saturation_as_the_filter_measures_it": 0.36
+  },
+  {
+   "seconds": 8.0,
+   "gripper_open": false,
+   "tip_height_cm": 12.7,
+   "sure": 0.0,
+   "filter_share": 0.001,
+   "filter_share_hue_from_minus_20": 0.23,
+   "ballish_share": 0.163,
+   "ball_rgb": [
+    145,
+    104,
+    113
+   ],
+   "background_rgb": [
+    99,
+    114,
+    136
+   ],
+   "background_saturation": 0.269,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -11.9,
+   "ball_saturation_as_the_filter_measures_it": 0.29
+  },
+  {
+   "seconds": 8.33,
+   "gripper_open": false,
+   "tip_height_cm": 14.7,
+   "sure": 0.0,
+   "filter_share": 0.012,
+   "filter_share_hue_from_minus_20": 0.25,
+   "ballish_share": 0.231,
+   "ball_rgb": [
+    132,
+    92,
+    99
+   ],
+   "background_rgb": [
+    105,
+    125,
+    139
+   ],
+   "background_saturation": 0.244,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -9.2,
+   "ball_saturation_as_the_filter_measures_it": 0.35
+  },
+  {
+   "seconds": 8.67,
+   "gripper_open": false,
+   "tip_height_cm": 14.8,
+   "sure": 0.001,
+   "filter_share": 0.017,
+   "filter_share_hue_from_minus_20": 0.257,
+   "ballish_share": 0.249,
+   "ball_rgb": [
+    130,
+    91,
+    97
+   ],
+   "background_rgb": [
+    113,
+    135,
+    149
+   ],
+   "background_saturation": 0.239,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -8.0,
+   "ball_saturation_as_the_filter_measures_it": 0.36
+  },
+  {
+   "seconds": 9.0,
+   "gripper_open": false,
+   "tip_height_cm": 14.9,
+   "sure": 0.002,
+   "filter_share": 0.059,
+   "filter_share_hue_from_minus_20": 0.275,
+   "ballish_share": 0.32,
+   "ball_rgb": [
+    141,
+    100,
+    103
+   ],
+   "background_rgb": [
+    111,
+    135,
+    145
+   ],
+   "background_saturation": 0.234,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -4.9,
+   "ball_saturation_as_the_filter_measures_it": 0.35
+  },
+  {
+   "seconds": 9.33,
+   "gripper_open": false,
+   "tip_height_cm": 15.4,
+   "sure": 0.002,
+   "filter_share": 0.127,
+   "filter_share_hue_from_minus_20": 0.298,
+   "ballish_share": 0.353,
+   "ball_rgb": [
+    147,
+    103,
+    104
+   ],
+   "background_rgb": [
+    110,
+    134,
+    142
+   ],
+   "background_saturation": 0.224,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": -1.8,
+   "ball_saturation_as_the_filter_measures_it": 0.35
+  },
+  {
+   "seconds": 9.67,
+   "gripper_open": false,
+   "tip_height_cm": 15.4,
+   "sure": 0.029,
+   "filter_share": 0.159,
+   "filter_share_hue_from_minus_20": 0.305,
+   "ballish_share": 0.36,
+   "ball_rgb": [
+    149,
+    105,
+    105
+   ],
+   "background_rgb": [
+    111,
+    136,
+    142
+   ],
+   "background_saturation": 0.22,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 0.0,
+   "ball_saturation_as_the_filter_measures_it": 0.36
+  },
+  {
+   "seconds": 10.0,
+   "gripper_open": false,
+   "tip_height_cm": 15.0,
+   "sure": 0.048,
+   "filter_share": 0.208,
+   "filter_share_hue_from_minus_20": 0.319,
+   "ballish_share": 0.37,
+   "ball_rgb": [
+    152,
+    108,
+    106
+   ],
+   "background_rgb": [
+    109,
+    133,
+    138
+   ],
+   "background_saturation": 0.212,
+   "ball_red_at_ceiling": 0.0,
+   "ball_hue_as_the_filter_measures_it": 1.6,
+   "ball_saturation_as_the_filter_measures_it": 0.37
+  },
+  {
+   "seconds": 10.33,
+   "gripper_open": false,
+   "tip_height_cm": 14.5,
+   "sure": 0.476,
+   "filter_share": 0.231,
+   "filter_share_hue_from_minus_20": 0.325,
+   "ballish_share": 0.371,
+   "ball_rgb": [
+    155,
+    110,
+    107
+   ],
+   "background_rgb": [
+    106,
+    128,
+    133
+   ],
+   "background_saturation": 0.206,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 2.8,
+   "ball_saturation_as_the_filter_measures_it": 0.36
+  },
+  {
+   "seconds": 10.67,
+   "gripper_open": false,
+   "tip_height_cm": 14.4,
+   "sure": 0.091,
+   "filter_share": 0.246,
+   "filter_share_hue_from_minus_20": 0.314,
+   "ballish_share": 0.359,
+   "ball_rgb": [
+    157,
+    114,
+    109
+   ],
+   "background_rgb": [
+    101,
+    124,
+    126
+   ],
+   "background_saturation": 0.201,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 4.6,
+   "ball_saturation_as_the_filter_measures_it": 0.35
+  },
+  {
+   "seconds": 11.0,
+   "gripper_open": false,
+   "tip_height_cm": 14.1,
+   "sure": 0.218,
+   "filter_share": 0.241,
+   "filter_share_hue_from_minus_20": 0.3,
+   "ballish_share": 0.333,
+   "ball_rgb": [
+    162,
+    119,
+    114
+   ],
+   "background_rgb": [
+    97,
+    118,
+    120
+   ],
+   "background_saturation": 0.193,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 5.8,
+   "ball_saturation_as_the_filter_measures_it": 0.33
+  },
+  {
+   "seconds": 11.33,
+   "gripper_open": false,
+   "tip_height_cm": 14.6,
+   "sure": 0.242,
+   "filter_share": 0.25,
+   "filter_share_hue_from_minus_20": 0.291,
+   "ballish_share": 0.321,
+   "ball_rgb": [
+    164,
+    123,
+    116
+   ],
+   "background_rgb": [
+    94,
+    116,
+    117
+   ],
+   "background_saturation": 0.193,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 7.8,
+   "ball_saturation_as_the_filter_measures_it": 0.32
+  },
+  {
+   "seconds": 11.67,
+   "gripper_open": false,
+   "tip_height_cm": 15.7,
+   "sure": 0.165,
+   "filter_share": 0.226,
+   "filter_share_hue_from_minus_20": 0.274,
+   "ballish_share": 0.329,
+   "ball_rgb": [
+    163,
+    123,
+    118
+   ],
+   "background_rgb": [
+    99,
+    123,
+    125
+   ],
+   "background_saturation": 0.205,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 6.3,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  },
+  {
+   "seconds": 12.0,
+   "gripper_open": false,
+   "tip_height_cm": 15.8,
+   "sure": 0.36,
+   "filter_share": 0.206,
+   "filter_share_hue_from_minus_20": 0.254,
+   "ballish_share": 0.317,
+   "ball_rgb": [
+    160,
+    122,
+    117
+   ],
+   "background_rgb": [
+    105,
+    133,
+    136
+   ],
+   "background_saturation": 0.226,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 6.2,
+   "ball_saturation_as_the_filter_measures_it": 0.3
+  },
+  {
+   "seconds": 12.33,
+   "gripper_open": false,
+   "tip_height_cm": 15.0,
+   "sure": 0.384,
+   "filter_share": 0.213,
+   "filter_share_hue_from_minus_20": 0.265,
+   "ballish_share": 0.319,
+   "ball_rgb": [
+    159,
+    121,
+    115
+   ],
+   "background_rgb": [
+    109,
+    137,
+    140
+   ],
+   "background_saturation": 0.221,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 6.4,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  },
+  {
+   "seconds": 12.67,
+   "gripper_open": false,
+   "tip_height_cm": 14.8,
+   "sure": 0.176,
+   "filter_share": 0.233,
+   "filter_share_hue_from_minus_20": 0.282,
+   "ballish_share": 0.33,
+   "ball_rgb": [
+    163,
+    123,
+    117
+   ],
+   "background_rgb": [
+    106,
+    132,
+    135
+   ],
+   "background_saturation": 0.216,
+   "ball_red_at_ceiling": 0.02,
+   "ball_hue_as_the_filter_measures_it": 6.6,
+   "ball_saturation_as_the_filter_measures_it": 0.32
+  },
+  {
+   "seconds": 13.0,
+   "gripper_open": false,
+   "tip_height_cm": 13.9,
+   "sure": 0.417,
+   "filter_share": 0.241,
+   "filter_share_hue_from_minus_20": 0.288,
+   "ballish_share": 0.328,
+   "ball_rgb": [
+    164,
+    124,
+    117
+   ],
+   "background_rgb": [
+    106,
+    132,
+    134
+   ],
+   "background_saturation": 0.21,
+   "ball_red_at_ceiling": 0.02,
+   "ball_hue_as_the_filter_measures_it": 7.2,
+   "ball_saturation_as_the_filter_measures_it": 0.32
+  },
+  {
+   "seconds": 13.33,
+   "gripper_open": false,
+   "tip_height_cm": 14.3,
+   "sure": 0.776,
+   "filter_share": 0.25,
+   "filter_share_hue_from_minus_20": 0.295,
+   "ballish_share": 0.342,
+   "ball_rgb": [
+    167,
+    126,
+    120
+   ],
+   "background_rgb": [
+    102,
+    128,
+    131
+   ],
+   "background_saturation": 0.22,
+   "ball_red_at_ceiling": 0.03,
+   "ball_hue_as_the_filter_measures_it": 7.1,
+   "ball_saturation_as_the_filter_measures_it": 0.32
+  },
+  {
+   "seconds": 13.67,
+   "gripper_open": false,
+   "tip_height_cm": 15.2,
+   "sure": 0.244,
+   "filter_share": 0.255,
+   "filter_share_hue_from_minus_20": 0.283,
+   "ballish_share": 0.325,
+   "ball_rgb": [
+    167,
+    128,
+    120
+   ],
+   "background_rgb": [
+    100,
+    127,
+    129
+   ],
+   "background_saturation": 0.223,
+   "ball_red_at_ceiling": 0.02,
+   "ball_hue_as_the_filter_measures_it": 9.6,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  },
+  {
+   "seconds": 14.0,
+   "gripper_open": false,
+   "tip_height_cm": 15.0,
+   "sure": 0.304,
+   "filter_share": 0.232,
+   "filter_share_hue_from_minus_20": 0.273,
+   "ballish_share": 0.299,
+   "ball_rgb": [
+    163,
+    125,
+    118
+   ],
+   "background_rgb": [
+    106,
+    132,
+    134
+   ],
+   "background_saturation": 0.206,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 8.1,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  },
+  {
+   "seconds": 14.33,
+   "gripper_open": false,
+   "tip_height_cm": 15.5,
+   "sure": 0.143,
+   "filter_share": 0.229,
+   "filter_share_hue_from_minus_20": 0.272,
+   "ballish_share": 0.297,
+   "ball_rgb": [
+    159,
+    121,
+    114
+   ],
+   "background_rgb": [
+    108,
+    135,
+    136
+   ],
+   "background_saturation": 0.2,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 8.0,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  },
+  {
+   "seconds": 14.67,
+   "gripper_open": false,
+   "tip_height_cm": 16.7,
+   "sure": 0.171,
+   "filter_share": 0.23,
+   "filter_share_hue_from_minus_20": 0.271,
+   "ballish_share": 0.296,
+   "ball_rgb": [
+    157,
+    119,
+    113
+   ],
+   "background_rgb": [
+    110,
+    137,
+    138
+   ],
+   "background_saturation": 0.202,
+   "ball_red_at_ceiling": 0.01,
+   "ball_hue_as_the_filter_measures_it": 8.1,
+   "ball_saturation_as_the_filter_measures_it": 0.31
+  }
+ ]
+}
