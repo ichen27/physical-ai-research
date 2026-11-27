@@ -48,6 +48,13 @@ bash ci/run.sh
 
 State plainly which of these a change was checked against: unit tests, a simulator run, the real arm. A change to `understudy_isaac/` is unverified until it has run in Isaac Lab.
 
+## Documentation
+
+- `README.md` is the write-up: it reads like a short research paper in the author's own plain first-person voice, and every number in it comes from a file under `results/`. When a result changes, change the results folder first, then the README's table and its chart.
+- `docs/MANUAL.md` is the operational reference: setup, training, every `real_arm.py` command, safety, the file-by-file layout. Commands and procedures go there, not in the README.
+- Charts are drawn by `docs/figures/make_figures.py` (light and dark versions; matplotlib). Do not edit the PNGs by hand. Animations in `docs/media/` are made from the videos under `results/` with ffmpeg; the README embeds GIFs because GitHub does not play a repository's mp4 files inline.
+- Real-arm runs are recorded under `results/real-arm/`, one JSON per run plus `runs.json`. Pictures from the real camera are not committed without the author's say-so.
+
 ## Workflow
 
 Feature branches and pull requests into `main`. No direct pushes of implementation to `main`. Merge only when the `test` check passes on the current revision. Commit as the repository owner only, with no tool or agent attribution anywhere.
