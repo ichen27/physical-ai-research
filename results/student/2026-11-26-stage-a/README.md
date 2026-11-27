@@ -4,7 +4,7 @@ A student network that is shown the wrist camera's picture instead of being told
 
 **What this stage is for.** It is not meant to produce the policy that runs on the arm. The final picture-driven policy is to be trained in Isaac Lab on a rented GPU (stage B). This stage's job is to find out, at no cost, what stage B has to get right, so that paid runs are not spent rediscovering it. [What stage B has to carry over](#what-stage-b-has-to-carry-over) is the result.
 
-**Verdict.** In simulation the student finds the ball every time and lifts it in about 70% of attempts, against 98% for the teacher. On real pictures it puts the ball about 1 cm from where it was, and is sure the ball is there in only 17 of 65. The cause of that is found and measured: the real camera shows the ball as a pale peach that the simulated pictures almost never contained. **Nothing here has run on the real arm.** No motor was powered and nothing was read from the arm for this work; the real pictures are ones already taken while the camera was being calibrated.
+**Verdict.** In simulation the student finds the ball every time and lifts it in about 70% of attempts, against 98% for the teacher. On real pictures it puts the ball about 1 cm from where it was, and is sure the ball is there in only 18 of 65. The cause of that is found and measured: the real camera shows the ball as a pale peach that the simulated pictures almost never contained. **Nothing here has run on the real arm.** No motor was powered and nothing was read from the arm for this work; the real pictures are ones already taken while the camera was being calibrated.
 
 ## What was built
 
@@ -119,9 +119,9 @@ Every ball that was lifted, by either, ended in the bowl. The student lifts from
 | Student | Sure the ball is there (65 pictures) | Sure (the 19) | Error in the ball's place, median (the 19) | Within 1 cm |
 | --- | --- | --- | --- | --- |
 | Trained on the first simulated pictures | 3 of 65 | 0 of 19 | 36.3 mm | 1 of 19 |
-| This one | 17 of 65 | 3 of 19 | 9.8 mm | 10 of 19 |
+| This one | 18 of 65 | 3 of 19 | 9.8 mm | 10 of 19 |
 
-These are no longer blind tests: the second student's pictures were changed after the first one failed on these same 19.
+These are no longer blind tests: the second student's pictures were changed after the first one failed on these same 19. Where the arm's pose was not recorded the start pose is assumed, which every such picture was taken from or near.
 
 ### The ball's colour is what did not carry over
 
@@ -145,7 +145,7 @@ So with nothing changed but the ball's colour, the same student, looking at the 
 
 **What carried over and what did not.** The geometry carried over: at the 19 real poses the simulated camera puts the ball within 8 pixels (of 1280) of where the real picture has it, and the student's error on real pictures is close to its error on simulated ones once the colour is put right. Clutter, glare and haze carried over, by the repaint test. The ball's colour did not.
 
-The first fix, already in this student, was the order of two steps: the haze must be added before exposure, as in a camera, not after. That took the student from 3 to 17 of 65 and from 36 mm to 10 mm. It is not enough.
+The first fix, already in this student, was the order of two steps: the haze must be added before exposure, as in a camera, not after. That took the student from 3 to 18 of 65 and from 36 mm to 10 mm. It is not enough.
 
 ## What stage B has to carry over
 
@@ -155,7 +155,7 @@ Each with the evidence. "Measured" means in simulation or on saved real pictures
 2. **Look from a raised pose, and sweep.** From the start pose the real camera shows, whole, 43% of the places a ball can be picked up from. From the look pose it shows all of them within 35 degrees either side, and four more looks cover 57 degrees either side. The student found the ball in 200 of 200 searches. Train on looks from the look pose as well as from the approach.
 3. **The ball as the real camera shows it.** Red at 255, green about 185, blue about 131, in 65 of 65 pictures. In a renderer that works in real light this should come from exposing so that the ball's red clips and then applying the camera's tone curve and its haze; whether it does is to be checked against these numbers before any training, with `student_real_checks.py colour`. Spread the colour for other rooms and lamps: across three sessions the real ball's green moved over 100 levels and its blue over 50.
 4. **The camera's settings, as used.** All 65 pictures were taken with exposure and white balance on automatic. If they can be fixed on this camera, so that the ball's red does not clip, the real ball will look much more like a plain orange and will stop changing with what else is in view. Whatever is chosen must be what the training pictures imitate, and it changes what "the real camera's picture" means for every later test. To measure at the arm: with each setting, the ball's red, green and blue (`look --save`, then this folder's colour check), over the ball near and far and in the arm's shadow; and whether the setting survives from one capture to the next, since each picture starts the camera afresh.
-5. **Haze before exposure, and exposure that wanders.** Measured: the other order cannot produce the real ball's colour at all, and cost 14 of 65 pictures.
+5. **Haze before exposure, and exposure that wanders.** Measured: the other order cannot produce the real ball's colour at all, and cost 15 of 65 pictures.
 6. **Geometry, clutter, glare and blur as they are here.** They carried over. They do not need a better renderer on this evidence.
 7. **The speed limits the real arm needs, in training.** The teacher was trained without them. With them it lifts 62% from its trained patch and 98% only when the arm is first turned to put the ball 3 cm to its left, and it swings wide as it lifts (next item). A teacher trained with the limits would need neither workaround.
 8. **The pickup swings to its right.** Lifting, the teacher swings up to 42 degrees to the right of where it faces with the gripper still under 11 cm. Anything standing there is struck. The student copies it. See [the carry](../../carry/2026-11-26-bowl/README.md).
@@ -168,7 +168,7 @@ Each with the evidence. "Measured" means in simulation or on saved real pictures
 
 ## Still unknown
 
-- **Whether putting the ball's colour right makes the student recognise the real ball.** The repaint test says it should. A student trained on simulated pictures with the ball in the real camera's colour, and two given a filtered picture instead of the colour one, are being trained; their results will be added here.
+- **Whether putting the ball's colour right in the simulated pictures makes a colour-picture student recognise the real ball.** The repaint test says it should; that student is being trained. A student given a filtered picture instead already does: see [the mask beside grey](../2026-11-26-mask-and-grey/README.md), sure of the ball in 65 of 65 of the same real pictures.
 - **Why this run learnt more slowly than the one before it.** One run of each.
 - **Anything about the real arm in motion:** the picture's real delay, the rolling shutter, blur that depends on distance (the lens is fixed-focus and near), and whether the student closes the loop on real pictures at all. Every real picture here was taken with the arm still.
 - **One desk, one room, one ball.** All 65 real pictures.

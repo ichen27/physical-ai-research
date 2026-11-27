@@ -3,11 +3,11 @@
   "student": "student.pt",
   "student_input": "colour",
   "pictures_showing_the_ball_whole": 65,
-  "sure_the_ball_is_there": "17 of 65",
+  "sure_the_ball_is_there": "18 of 65",
   "by_set": {
     "cal2": "5 of 21",
     "cal4": "11 of 39",
-    "find1": "1 of 5"
+    "find1": "2 of 5"
   },
   "with_recorded_pose_and_known_ball_place": {
     "pictures": 19,
@@ -442,35 +442,35 @@
       "set": "find1",
       "picture": "run-92083-004.jpg",
       "pose_recorded": false,
-      "sure": 0.734,
+      "sure": 0.825,
       "error_mm": null
     },
     {
       "set": "find1",
       "picture": "run-92083-005.jpg",
       "pose_recorded": false,
-      "sure": 0.117,
+      "sure": 0.105,
       "error_mm": null
     },
     {
       "set": "find1",
       "picture": "run-92083-006.jpg",
       "pose_recorded": false,
-      "sure": 0.195,
+      "sure": 0.263,
       "error_mm": null
     },
     {
       "set": "find1",
       "picture": "run-92083-007.jpg",
       "pose_recorded": false,
-      "sure": 0.192,
+      "sure": 0.239,
       "error_mm": null
     },
     {
       "set": "find1",
       "picture": "run-92083-008.jpg",
       "pose_recorded": false,
-      "sure": 0.297,
+      "sure": 0.6,
       "error_mm": null
     }
   ]
