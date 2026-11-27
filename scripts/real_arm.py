@@ -638,7 +638,9 @@ def cmd_run(args) -> None:
                     if trained_eye is not None:
                         from understudy.eye import finder
 
-                        facing = seek.face_ball(robot, calibration, None, None, find=finder(trained_eye, eye.picture), sweep=sweep)
+                        # A trained eye has to be sure twice: from where it first sees the ball and again facing it.
+                        facing = seek.face_ball(robot, calibration, None, None, find=finder(trained_eye, eye.picture),
+                                                sweep=sweep, confirm=True)
                     else:
                         facing = seek.face_ball(robot, calibration, wrist, look_now, sweep=sweep)
                 except (ValueError, CameraError) as error:

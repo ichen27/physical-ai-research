@@ -96,6 +96,23 @@ class SeekWithAFinderTests(unittest.TestCase):
         self.assertEqual(where, (0.18, 0.09))
         self.assertEqual(seen_from, [round(angle, 2) for angle in seek.SCAN[:3]])
 
+    def test_asked_to_confirm_it_stops_if_the_ball_is_not_seen_again_facing_it(self):
+        calibration = arm.Calibration.stock()
+        answers = iter([(0.18, 0.09, pickup.BALL_RADIUS_M), None])
+        robot = sim_rig.JumpArm(calibration)
+        with self.assertRaises(ValueError) as stopped:
+            seek.face_ball(robot, calibration, None, None, say=lambda _: None, find=lambda angles, near=None: next(answers), confirm=True)
+        self.assertIn("not again", str(stopped.exception))
+        # Left raised in the look pose, facing where the ball was first seen, not brought down towards it.
+        pose = calibration.to_rad(robot.read().positions[:5])
+        for angle, wanted in zip(pose[1:4], seek.LOOK_POSE[1:4]):
+            self.assertAlmostEqual(angle, wanted, delta=0.01)
+        # Without it, the first sighting is used, as the hand-written finder's has always been.
+        answers = iter([(0.18, 0.09, pickup.BALL_RADIUS_M), None])
+        facing = seek.face_ball(sim_rig.JumpArm(calibration), calibration, None, None, say=lambda _: None,
+                                find=lambda angles, near=None: next(answers))
+        self.assertIsNotNone(facing)
+
     def test_without_a_camera_or_a_finder_it_refuses(self):
         calibration = arm.Calibration.stock()
         with self.assertRaises(ValueError):
