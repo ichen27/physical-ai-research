@@ -1,0 +1,47 @@
+{
+  "check": "changes",
+  "student": "student.pt",
+  "student_input": "colour",
+  "as taken": {
+    "sure_the_ball_is_there": "3 of 19",
+    "median_sureness": 0.29,
+    "error_mm_median": 9.8,
+    "error_mm_worst": 44.7
+  },
+  "the ball's colour made 1.6 times stronger": {
+    "sure_the_ball_is_there": "13 of 19",
+    "median_sureness": 0.72,
+    "error_mm_median": 7.6,
+    "error_mm_worst": 27.5
+  },
+  "the pale and blown-out parts of the ball filled with its own colour": {
+    "sure_the_ball_is_there": "8 of 19",
+    "median_sureness": 0.36,
+    "error_mm_median": 6.5,
+    "error_mm_worst": 46.3
+  },
+  "the ball 20% darker": {
+    "sure_the_ball_is_there": "5 of 19",
+    "median_sureness": 0.24,
+    "error_mm_median": 7.7,
+    "error_mm_worst": 75.3
+  },
+  "the whole picture 20% darker": {
+    "sure_the_ball_is_there": "7 of 19",
+    "median_sureness": 0.35,
+    "error_mm_median": 8.8,
+    "error_mm_worst": 32.9
+  },
+  "the veil taken off the whole picture": {
+    "sure_the_ball_is_there": "2 of 19",
+    "median_sureness": 0.18,
+    "error_mm_median": 9.4,
+    "error_mm_worst": 43.4
+  },
+  "the ball repainted a plain orange, keeping its shading": {
+    "sure_the_ball_is_there": "17 of 19",
+    "median_sureness": 0.91,
+    "error_mm_median": 6.1,
+    "error_mm_worst": 17.4
+  }
+}

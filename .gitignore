@@ -9,3 +9,7 @@ outputs/
 *.local.json
 # Recordings are added deliberately once they are worth showing.
 results/**/*.mp4
+# Pictures and other records kept beside a local calibration.
+*.local/
+# The pictures a student was shown during a run on the real arm.
+*.pictures.npz
