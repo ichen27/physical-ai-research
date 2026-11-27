@@ -65,7 +65,8 @@ def build_model(
     length and mount of the one given are used.
 
     ``extras`` is called with the model's description just before it is compiled, to add
-    things to the scene (``understudy.sim_look.dress`` adds what varied pictures need).
+    things to the scene (``understudy.sim_look.dress`` adds what varied pictures need,
+    ``understudy.sim_bowl.add_bowl`` a bowl).
     """
     if stiffness_scale <= 0:
         raise ValueError("stiffness_scale must be positive")

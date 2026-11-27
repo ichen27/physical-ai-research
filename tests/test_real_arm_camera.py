@@ -198,7 +198,7 @@ class ToolWithCameraTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"any_distance": False, "find_only": False, **extra},
+            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -216,6 +216,78 @@ class ToolWithCameraTests(unittest.TestCase):
         self.assertLess(log["turn_rad"], -0.5)
         self.assertAlmostEqual(log["ball"][1], 0.03, delta=0.006)  # in the turned frame the ball is 3 cm to the left
         self.assertFalse(self.bench.robot.torque_on)
+
+    def test_the_ball_is_picked_up_and_put_down_on_the_desk_at_the_side(self):
+        ball = (-0.01125 + 0.2 * math.cos(0.3), 0.2 * math.sin(0.3))
+        out, log = self.run_pickup(ball, set_down=[80.0, 20.0])
+        self.assertIn("carrying the ball to +80 degrees round, 20 cm from the swivel axis\n", out, out)
+        self.assertRegex(out, r"ball let go (19\.\d|20\.\d) cm from the swivel axis, \+(7\d|8\d) degrees round")
+        self.assertIn("torque off, settings restored", out)
+        self.assertTrue(log["carry"]["done"])
+        spot = (-0.01125 + 0.2 * math.cos(math.radians(80)), 0.2 * math.sin(math.radians(80)))
+        self.assertLess(math.dist(log["carry"]["released_at"], spot), 0.01)
+        self.assertGreater(self.bench.highest, 0.15)  # it was carried high
+        self.assertLess(float(self.bench.sim.ball()[2]), pickup.BALL_RADIUS_M + 0.003)  # and is on the desk again, not held
+        self.assertLess(math.dist(self.bench.sim.ball()[:2], ball), 0.5)
+        self.assertGreater(math.dist(self.bench.sim.ball()[:2], ball), 0.1)  # away from where it was picked up
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
+
+    # A cereal bowl at the arm's left, as two readings of `where`: the tip over its middle, then resting on its rim.
+    BOWL = [0.0, 0.24, 0.0, 0.165, 0.065]
+
+    def test_the_ball_is_carried_over_a_bowl_and_let_go_above_its_rim(self):
+        ball = (-0.01125 + 0.2 * math.cos(0.1), 0.2 * math.sin(0.1))
+        heights = []
+        watch = self.bench.sim.after_step
+
+        def also(sim):
+            watch(sim)
+            heights.append((float(sim.ball()[2]), float(sim.data.ctrl[sim._ctrl[5]])))
+
+        self.bench.sim.after_step = also
+        try:
+            out, log = self.run_pickup(ball, bowl=self.BOWL)
+        finally:
+            self.bench.sim.after_step = watch
+        self.assertIn("carrying the ball to +87 degrees round, 24 cm from the swivel axis, "
+                      "into a bowl 15.0 cm across with its rim 6.5 cm up", out, out)
+        self.assertIn("let go over the container", out)
+        self.assertTrue(log["carry"]["done"])
+        self.assertLess(math.dist(log["carry"]["released_at"], (0.0, 0.24)), 0.01)
+        # The bench has no bowl in it: what is checked is that the ball was still held, and above
+        # where the rim would be, when the gripper began to open over the bowl's middle.
+        carried = heights[next(i for i, (height, _) in enumerate(heights) if height > 0.18):]  # from when it was raised
+        let_go = next(height for height, finger in carried if finger > 0.02)
+        self.assertGreater(let_go - pickup.BALL_RADIUS_M, 0.065 + 0.005)
+        self.assertLess(let_go - pickup.BALL_RADIUS_M, 0.065 + 0.02)
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
+
+    def test_a_ball_the_bowl_is_in_the_way_of_is_not_picked_up(self):
+        ball = (-0.01125 + 0.2 * math.cos(math.radians(55)), 0.2 * math.sin(math.radians(55)))  # round towards the bowl
+        out, log = self.run_pickup(ball, bowl=self.BOWL)
+        self.assertIn("stopped before the pickup: the container is in the gripper's way", out, out)
+        self.assertNotIn("carrying the ball", out)
+        self.assertLess(float(self.bench.sim.ball()[2]), pickup.BALL_RADIUS_M + 0.003)  # still on the desk
+        self.assertLess(math.dist(self.bench.sim.ball()[:2], ball), 0.005)  # and not knocked
+        self.assertFalse(self.bench.robot.torque_on)
+
+    def test_a_place_the_arm_cannot_use_is_refused_before_the_arm_is_powered(self):
+        for extra, why in (
+            (dict(set_down=[120.0, 20.0]), "further than the swivel goes"),
+            (dict(bowl=[0.0, 0.16, 0.0, 0.085, 0.065]), "near edge"),
+            (dict(bowl=self.BOWL, set_down=[80.0, 20.0]), "not both"),
+        ):
+            self.bench.rest((0.2, 0.03))
+            self.bench.robot.log.clear()
+            out, log = self.run_pickup((0.2, 0.03), **extra)
+            with self.subTest(extra=extra):
+                self.assertIn(why, out)
+                self.assertIsNone(log)
+                self.assertEqual(self.bench.robot.log, [])  # never configured, never moved
 
     def test_find_only_says_where_the_ball_is_and_leaves_it_on_the_desk(self):
         distance, bearing = 0.2, math.radians(25)

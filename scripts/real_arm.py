@@ -22,6 +22,8 @@ and then:
 
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --find_only   # find it and say where; no pickup
     python scripts/real_arm.py run --policy <policy.onnx> --camera look   # one look, then pick it up
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look --bowl 0.0 0.24 0.0 0.165 0.065   # ... and drop it in a bowl
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look --set_down 80 22   # ... or put it down on the desk
     python scripts/real_arm.py run --policy <policy.onnx> --camera live   # follow the ball; start from Terminal
 
 Needs: pip install dynamixel_sdk onnxruntime numpy opencv-python-headless
@@ -47,6 +49,7 @@ from understudy.runner import (  # noqa: E402
     PlacedBall,
     SwivelLimit,
     goals_from_command,
+    in_turned_frame,
     run_pickup,
     sensed_from_reading,
 )
@@ -497,6 +500,27 @@ def cmd_run(args) -> None:
         raise SystemExit("give the ball's position with --ball X Y, or let the camera find it with --camera look|live")
     if args.camera and args.dry_run:
         raise SystemExit("a dry run leaves the arm limp, and the camera sees the desk only from the raised start pose; use --ball")
+    place = None
+    if args.set_down and args.bowl:
+        raise SystemExit("say where the ball goes with --bowl (into a bowl) or --set_down (onto the desk), not both")
+    if args.set_down or args.bowl:
+        from understudy import carry
+
+        option = "--bowl" if args.bowl else "--set_down"
+        if args.bowl:
+            place = carry.SetDown.from_touches(args.bowl[:2], args.bowl[2:5])
+        else:
+            place = carry.SetDown(math.radians(args.set_down[0]), args.set_down[1] / 100.0)
+        try:
+            carry.set_down_poses(place)  # refuse a place the arm cannot use before anything is powered
+        except ValueError as error:
+            raise SystemExit(f"{option}: {error}") from None
+        if args.dry_run:
+            raise SystemExit(f"a dry run does not pick anything up, so there is nothing to carry; leave out {option}")
+        if args.ball:
+            blocked = carry.in_the_way(place, args.ball, facing_rad=0.0)  # with --ball the arm faces straight ahead
+            if blocked:
+                raise SystemExit(f"{option}: {blocked}. Move the bowl or the ball; nothing was powered.")
     calibration = arm.Calibration.load(args.calibration)
     policy = runtime.OnnxPolicy(args.policy)
     print(BASE_NOTE)
@@ -588,6 +612,11 @@ def cmd_run(args) -> None:
                 record_of_run.update(ball=list(facing.ball), turn_rad=facing.turn_rad)
                 if args.find_only:
                     raise SystemExit("found the ball; no pickup was attempted because --find_only was given.")
+                if place is not None:
+                    seen_at = in_turned_frame((*facing.ball, 0.0), -facing.turn_rad)[:2]  # back in the arm's own frame
+                    blocked = carry.in_the_way(place, seen_at, facing.turn_rad)
+                    if blocked:
+                        raise SystemExit(f"stopped before the pickup: {blocked}. Move the bowl or the ball.")
                 if live:
                     ball = CameraBall(wrist, lambda: live.look(colour), facing.ball, latency_steps=args.camera_latency_steps)
                 else:
@@ -604,13 +633,27 @@ def cmd_run(args) -> None:
                   f"finger angle {last.joint_angles[5]:.2f} rad (above {PlacedBall.HELD_FINGER_RAD} with the gripper closed means it is holding something)")
             if isinstance(ball, CameraBall):
                 print(f"the camera placed the ball on {ball.steps_seen} steps and kept its last position on {ball.steps_kept}")
-            # Nothing waits on the keyboard while the arm is powered: the servos'
-            # watchdog stops them if the bus goes quiet for half a second.
-            # So the hold keeps reading, and sends no new goal: the gripper keeps squeezing.
-            hold_still(robot, args.hold_seconds)
-            release = list(robot.read().positions)
-            release[5] = calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)
-            robot.move_slowly(release, 1.0)
+            carried = None
+            if place is not None:
+                # The carry sends a goal and reads the servos every control step, which keeps their watchdog fed.
+                into = (f", into a bowl {place.opening_m * 100:.1f} cm across with its rim {place.rim_m * 100:.1f} cm up"
+                        if place.opening_m > 0 else "")
+                print(f"carrying the ball to {math.degrees(place.bearing_rad):+.0f} degrees round, "
+                      f"{place.distance_m * 100:.0f} cm from the swivel axis{into}", flush=True)
+                carried = carry.carry(robot, calibration, place, robot.advance)
+                print(carried.said)
+                record_of_run["carry"] = {"bearing_deg": math.degrees(place.bearing_rad), "distance_cm": place.distance_m * 100,
+                                          "bowl_opening_cm": place.opening_m * 100, "bowl_rim_cm": place.rim_m * 100,
+                                          "done": carried.done, "said": carried.said,
+                                          "released_at": None if carried.released_at is None else list(carried.released_at)}
+            if carried is None or (not carried.done and carried.said.startswith("not carried")):
+                # Nothing waits on the keyboard while the arm is powered: the servos'
+                # watchdog stops them if the bus goes quiet for half a second.
+                # So the hold keeps reading, and sends no new goal: the gripper keeps squeezing.
+                hold_still(robot, args.hold_seconds)
+                release = list(robot.read().positions)
+                release[5] = calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)
+                robot.move_slowly(release, 1.0)
         finally:
             log_path.write_text(json.dumps({**record_of_run, "target": list(args.target),
                                             "max_speed": args.max_speed, "max_lead": args.max_lead,
@@ -692,6 +735,15 @@ def main() -> None:
                      help="For --camera live: how many control steps old a picture is taken to be.")
     run.add_argument("--ffmpeg", default=str(Path.home() / "understudy-camera" / "ffmpeg"), help="For --camera live.")
     run.add_argument("--any_distance", action="store_true", help="Try the pickup even if the ball is outside the distances the policy handles.")
+    run.add_argument("--bowl", type=float, nargs=5, metavar=("MIDDLE_X", "MIDDLE_Y", "RIM_X", "RIM_Y", "RIM_Z"),
+                     help="After the pickup, carry the ball to a bowl and drop it in. Say where the bowl is with two readings "
+                     "of the `where` command, in metres as it prints them: x and y with the gripper's tip over the middle of "
+                     "the bowl, then x, y and z with the tip resting on its rim. Slow, with the gripper raised; everything "
+                     "the README lists has to be clear. Off unless given.")
+    run.add_argument("--set_down", type=float, nargs=2, metavar=("BEARING_DEG", "DISTANCE_CM"),
+                     help="After the pickup, carry the ball to this place on the bare desk and put it down: degrees round "
+                     "from straight ahead (positive to the arm's left, up to 90 either way) and centimetres from the swivel "
+                     "axis. Off unless given.")
     run.add_argument("--find_only", action="store_true",
                      help="With --camera: find the ball, turn to face it, say where it is, and lower the arm without a pickup.")
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))
