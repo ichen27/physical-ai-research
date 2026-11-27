@@ -51,6 +51,7 @@ class Bench:
         self.folder = folder
         ODD.save(folder / "calibration.json")
         self.on_picture = None
+        self.stream = None  # a class to stand in for the live camera, if a test wants one
         self.highest = 0.0
         self.sim.after_step = self._after_step
         bench = self
@@ -85,8 +86,11 @@ class Bench:
 
     def run(self, tool, command, **extra) -> str:
         said = io.StringIO()
+        from understudy import camera_feed
+
         with mock.patch.object(tool, "open_arm", lambda args: self.robot), \
                 mock.patch("understudy.camera_feed.WatcherCamera", self.watcher), \
+                mock.patch("understudy.camera_feed.LiveCamera", self.stream or camera_feed.LiveCamera), \
                 mock.patch("builtins.input", lambda prompt="": "yes"), \
                 mock.patch.object(tool.time, "sleep", lambda seconds: None), \
                 contextlib.redirect_stdout(said):
@@ -199,7 +203,7 @@ class ToolWithCameraTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "sweep_deg": 57.0, **extra},
+            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "driver": None, "sweep_deg": 57.0, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -377,7 +381,7 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "sweep_deg": 57.0, **extra},
+            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "driver": None, "sweep_deg": 57.0, **extra},
         )
         return out
 
@@ -431,6 +435,154 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
     def test_the_eye_works_only_with_still_pictures(self):
         out = self.run_pickup((0.2, 0.03), camera="live")
         self.assertIn("use it with --camera look", out)
+        self.assertEqual(self.bench.robot.log, [])
+
+
+
+DRIVER = EYE.with_name("driver.onnx")
+
+
+class ToolWithStudentDrivingTests(unittest.TestCase):
+    """``run --camera live --driver``: a trained student moves the arm itself from a stream of pictures. No PyTorch needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not DRIVER.exists():
+            raise unittest.SkipTest("no exported student in this checkout")
+        try:
+            import onnxruntime  # noqa: F401
+
+            from understudy.camera_model import WristCamera
+
+            trained = json.loads(DRIVER.with_suffix(".json").read_text())["student_training"]["nominal_camera"]
+            camera = WristCamera(**{key: tuple(value) if isinstance(value, list) else value for key, value in trained.items()})
+            cls.temp = tempfile.TemporaryDirectory()
+            cls.bench = Bench(Path(cls.temp.name), camera.resized(640, 360))
+        except ImportError as error:
+            raise unittest.SkipTest(f"needs mujoco and onnxruntime: {error}") from error
+        except Exception as error:  # no OpenGL on this machine
+            raise unittest.SkipTest(f"cannot render: {error}") from error
+        cls.tool = load_tool()
+        bench = cls.bench
+
+        class Stream:
+            """Stands in for the live camera: the simulated wrist camera's picture, a few steps late, some steps with none."""
+
+            width, height = 640, 360
+
+            def __init__(self, **kwargs):
+                self.steps, self.late = 0, []
+
+            def wait_for_first(self, timeout_s: float = 10.0) -> None:
+                pass
+
+            def newest(self):
+                return bench.view.picture()
+
+            def picture(self):
+                self.steps += 1
+                if bench.at_step is not None:
+                    bench.at_step(self.steps)
+                if bench.stops_at is not None and self.steps >= bench.stops_at:
+                    return None  # the stream has died
+                self.late = [bench.view.picture(), *self.late[:2]]
+                if self.steps % 7 == 0:
+                    return None  # no new picture this step
+                return self.late[-1]  # two control steps old
+
+            def close(self) -> None:
+                pass
+
+        bench.stream = Stream
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.bench.view.close()
+        cls.temp.cleanup()
+
+    def setUp(self):
+        self.bench.at_step = self.bench.stops_at = None
+
+    def drive(self, ball, **extra):
+        self.bench.rest(ball)
+        self.bench.robot.log.clear()
+        log = self.bench.folder / "run.json"
+        for old in self.bench.folder.glob("run*"):
+            old.unlink()
+        out = self.bench.run(
+            self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, target=[0.19, 0.0, 0.13],
+            seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(log),
+            dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
+            **{"camera": "live", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None,
+               "driver": str(DRIVER), "sweep_deg": 57.0, **extra},
+        )
+        return out, json.loads(log.read_text()) if log.exists() else None
+
+    def test_the_student_drives_from_the_stream_and_lifts_the_ball_and_every_step_is_recorded(self):
+        import numpy as np
+
+        distance, bearing = 0.19, math.radians(-25)
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        out, log = self.drive(ball)
+        self.assertIn("A trained student, shown the pictures, moves the arm itself", out, out)
+        self.assertRegex(out, r"the eye sees the ball \(0\.\d\d sure\)")
+        self.assertIn("finished. gripper closed", out, out)
+        self.assertGreater(self.bench.highest, pickup.LIFTED_HEIGHT_M)  # lifted, from pictures alone
+        self.assertEqual(log["driven_by"], "driver.onnx")
+        steps = log["steps"]
+        self.assertEqual(len(steps), 450)
+        self.assertEqual(steps[0]["ball"], [0.0, 0.0, 0.0])  # the student was never told where the ball is
+        for key in ("seen", "sure", "ball_from_memory", "picture_steps_old", "thinking_ms"):
+            self.assertIn(key, steps[10])
+        self.assertGreater(steps[10]["sure"], 0.5)
+        self.assertEqual(max(step["picture_steps_old"] for step in steps), 1)  # every seventh step reused the last picture
+        self.assertLess(max(step["thinking_ms"] for step in steps), 33.0)  # well inside a control step
+        # No joint was asked to move faster than the limit.
+        fastest = max(abs(b - a) for before, after in zip(steps, steps[1:]) for a, b in zip(before["targets"], after["targets"]))
+        self.assertLessEqual(fastest * arm.CONTROL_HZ, 0.3 + 1e-3)
+        shown = np.load(self.bench.folder / "run.pictures.npz")["pictures"]
+        self.assertEqual(shown.shape, (450, 72, 128, 3))
+        self.assertIn("pictures the student was shown are in", out)
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
+
+    def test_it_stops_and_the_arm_is_lowered_when_the_ball_is_taken_away(self):
+        ball = (0.19, 0.03)
+
+        def take_it_away(step: int) -> None:
+            if step == 30:  # a second into the approach
+                self.bench.sim.place_ball((0.6, 0.5))
+
+        self.bench.at_step = take_it_away
+        out, log = self.drive(ball)
+        self.assertRegex(out, r"stopped during the pickup: the student has not been sure of the ball for 20 control steps in a row")
+        self.assertIn("The arm is being lowered", out)
+        self.assertNotIn("finished. gripper", out)
+        self.assertLess(len(log["steps"]), 120)  # stopped within about three seconds of losing it, not after the whole attempt
+        self.assertTrue(all(step["gripper_open"] for step in log["steps"]))  # and never closed on nothing
+        self.assertIn("torque off, settings restored", out)
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
+
+    def test_it_stops_when_the_pictures_stop_coming(self):
+        self.bench.stops_at = 40
+        out, log = self.drive((0.19, 0.03))
+        self.assertRegex(out, r"stopped during the pickup: no new picture has arrived from the camera for 11 control steps")
+        self.assertLess(len(log["steps"]), 60)
+        self.assertIn("torque off, settings restored", out)
+        self.assertFalse(self.bench.robot.torque_on)
+
+    def test_with_no_ball_it_never_starts(self):
+        out, log = self.drive((0.6, 0.5))
+        self.assertIn("stopped before the pickup: the camera did not see the ball anywhere it looked", out, out)
+        self.assertEqual(log["steps"], [])
+        self.assertFalse(self.bench.robot.torque_on)
+
+    def test_the_student_drives_only_from_a_stream(self):
+        out, log = self.drive((0.19, 0.03), camera="look")
+        self.assertIn("use it with --camera live", out)
+        self.assertIsNone(log)
         self.assertEqual(self.bench.robot.log, [])
 
 

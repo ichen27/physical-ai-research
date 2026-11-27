@@ -23,7 +23,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from . import pickup, runtime, vision
+from . import arm, pickup, runtime, vision
 from .runner import in_turned_frame
 
 # The picture the student network sees: the real camera's 1280 x 720 shrunk ten times.
@@ -40,6 +40,33 @@ FILTER = vision.BallColour(hue_low=0.0, hue_high=55.0, saturation_min=0.25, valu
 # The student counts the ball as seen when it is at least this sure.
 SURE = 0.5
 DEFAULT_HOLD_TARGET = (0.19, 0.0, 0.13)
+GUESS_SIZE = 2
+# The joint readings the student gets, taken from the teacher's 33 inputs: joint angles relative
+# to the start pose (6), joint speeds (6), the hold target (3), and how far each arm joint's target
+# leads the joint (5). Left out: the ball's position (3), a constant (4) and the previous output (6).
+_FROM_OBSERVATION = (*range(0, 12), *range(15, 18), *range(28, 33))
+SPEED_LIMIT_RAD_S = 0.3  # the limit the student's arm outputs are a share of
+LEAD_LIMIT_RAD = 0.05
+_STEP_RAD = SPEED_LIMIT_RAD_S / arm.CONTROL_HZ
+# A student driving from a stream of pictures is stopped when it has not been sure of the ball for this
+# many control steps in a row with the gripper still open. Measured in simulation: with the ball taken
+# away a second into the approach the student carries on from memory and closes on nothing; this stops
+# 19 such attempts in 20, and 1 in 35 of the attempts that would have lifted the ball.
+UNSURE_STEPS = 20
+# And when no new picture has arrived for this many control steps (a third of a second).
+STALE_STEPS = 10
+
+
+def proprio_from_observation(observation: Sequence[float]) -> np.ndarray:
+    """The student's joint readings from the teacher's 33 inputs. The ball's position is not among them."""
+    if len(observation) != 33:
+        raise ValueError(f"the teacher's observation has 33 numbers, got {len(observation)}")
+    return np.asarray([observation[i] for i in _FROM_OBSERVATION], dtype=np.float32)
+
+
+def action_from_moves(moves: Sequence[float], gripper_open: bool, scale: float) -> list[float]:
+    """A raw output, in the teacher's terms, that produces these moves under the speed limit."""
+    return [float(np.clip(m, -1.0, 1.0)) * _STEP_RAD / scale for m in moves] + [1.0 if gripper_open else -1.0]
 
 
 def shrink(image_bgr: np.ndarray) -> np.ndarray:
@@ -120,3 +147,114 @@ def finder(eye: Eye, picture: Callable[[], np.ndarray], sure: float = SURE,
         return in_turned_frame((point[0], point[1], pickup.BALL_RADIUS_M), -swivel)
 
     return find
+
+
+class Driver:
+    """An exported whole student: its eye, its memory and its moves. ``path`` is the ``.onnx`` file, with its ``.json`` beside it.
+
+    ``step`` is one control step and keeps the memory; ``glance`` is the eye alone, as
+    ``Eye.glance``, and leaves the memory as it is; ``reset`` forgets everything.
+    """
+
+    def __init__(self, path: str | Path):
+        import onnxruntime
+
+        path = Path(path)
+        notes = path.with_suffix(".json")
+        if not notes.exists():
+            raise ValueError(f"{notes.name} should be beside {path.name}: it says what input the student takes")
+        self.notes = json.loads(notes.read_text())
+        self.input = self.notes["input"]
+        if self.input not in INPUTS:
+            raise ValueError(f"{notes.name} names an input this code does not know: {self.input}")
+        options = onnxruntime.SessionOptions()
+        options.intra_op_num_threads = 1
+        self._session = onnxruntime.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+        self._width = int(self.notes["memory"])
+        self._state = np.zeros((1, 1, self._width), dtype=np.float32)
+
+    def reset(self) -> None:
+        self._state = np.zeros((1, 1, self._width), dtype=np.float32)
+
+    def _run(self, picture_bgr: np.ndarray, readings: np.ndarray, guess: Sequence[float], state: np.ndarray) -> list:
+        return self._session.run(None, {
+            "shown": shown(shrink(picture_bgr), self.input)[None], "readings": np.asarray(readings, dtype=np.float32)[None],
+            "guess": np.asarray([guess[:2]], dtype=np.float32), "state": state})
+
+    def glance(self, picture_bgr: np.ndarray, joint_angles: Sequence[float], finger: float = pickup.GRIPPER_OPEN_RAD,
+               hold_target: Sequence[float] = DEFAULT_HOLD_TARGET) -> tuple[tuple[float, float, float], float]:
+        seen = self._run(picture_bgr, readings_for(joint_angles, finger, hold_target), (0.0, 0.0), np.zeros_like(self._state))[3][0]
+        return (float(seen[0]), float(seen[1]), float(seen[2])), 1.0 / (1.0 + math.exp(-float(seen[3])))
+
+    def step(self, picture_bgr: np.ndarray, readings: np.ndarray, guess: Sequence[float]) -> dict:
+        """One control step. ``guess`` is where the ball was taken to be before the attempt (x, y, metres)."""
+        moves, is_open, ball, seen, self._state = self._run(picture_bgr, readings, guess, self._state)
+        return {
+            "moves": moves[0], "open": bool(is_open[0] >= 0.0), "ball": tuple(float(v) for v in ball[0]),
+            "seen": tuple(float(v) for v in seen[0, :3]), "in_view": 1.0 / (1.0 + math.exp(-float(seen[0, 3]))),
+        }
+
+
+class NotSure(RuntimeError):
+    """The student driving the arm cannot see what it is doing: the run must stop."""
+
+
+class StreamDriver:
+    """Drives the arm from a stream of pictures. Sits where ``understudy.runner.run_pickup`` expects both the
+    ball's position and the policy, as ``understudy.dagger.PictureDriver`` does in simulation.
+
+    ``picture`` returns the newest picture, or None if no new one has arrived since it was
+    last asked (``understudy.camera_feed.LiveCamera.picture``). The student is never told
+    where the ball is: the position reported to the runner is zeros. ``guess`` is where the
+    ball was taken to be when the arm turned to face it (x, y in the turned frame).
+
+    It raises ``NotSure``, which stops the run, when the student has not been sure of the
+    ball for ``unsure_steps`` control steps in a row with the gripper still open, or when no
+    new picture has arrived for ``stale_steps`` steps. A picture that is a step or two late
+    is used again; the student was trained on pictures up to three steps old.
+
+    ``thoughts`` records, for every step, what the student saw and how sure it was, and
+    ``pictures`` the picture it was given, at the student's size.
+    """
+
+    def __init__(self, driver: Driver, picture: Callable[[], np.ndarray | None], guess: Sequence[float],
+                 interface: runtime.Interface, sure: float = SURE, unsure_steps: int = UNSURE_STEPS,
+                 stale_steps: int = STALE_STEPS, clock: Callable[[], float] | None = None):
+        import time
+
+        self.interface = interface
+        self._driver, self._picture = driver, picture
+        self._guess = (float(guess[0]), float(guess[1]))
+        self._sure, self._unsure_steps, self._stale_steps = sure, unsure_steps, stale_steps
+        self._clock = clock or time.perf_counter
+        self._frame: np.ndarray | None = None
+        self._stale = self._unsure = 0
+        self.thoughts: list[dict] = []
+        self.pictures: list[np.ndarray] = []
+        driver.reset()
+
+    def position(self, joint_angles, finger_angle, gripper_open) -> tuple[float, float, float]:
+        frame = self._picture()
+        if frame is None:
+            self._stale += 1
+            if self._frame is None or self._stale > self._stale_steps:
+                raise NotSure(f"no new picture has arrived from the camera for {self._stale} control steps")
+        else:
+            self._frame, self._stale = shrink(frame), 0
+        return (0.0, 0.0, 0.0)
+
+    def __call__(self, observation: Sequence[float]) -> list[float]:
+        started = self._clock()
+        thought = self._driver.step(self._frame, proprio_from_observation(observation), self._guess)
+        self._unsure = self._unsure + 1 if (thought["open"] and thought["in_view"] < self._sure) else 0
+        self.thoughts.append({
+            "seen": [round(v, 4) for v in thought["seen"]], "sure": round(thought["in_view"], 3),
+            "ball_from_memory": [round(v, 4) for v in thought["ball"]], "picture_steps_old": self._stale,
+            "thinking_ms": round(1000.0 * (self._clock() - started), 2),
+        })
+        self.pictures.append(self._frame)
+        if self._unsure >= self._unsure_steps:
+            raise NotSure(f"the student has not been sure of the ball for {self._unsure} control steps in a row "
+                          f"({self._unsure / arm.CONTROL_HZ:.1f} s) with the gripper still open")
+        return action_from_moves(thought["moves"], thought["open"], self.interface.arm_action_scale)
+

@@ -47,25 +47,14 @@ import torch
 from torch import nn
 
 from . import arm
-from .eye import FILTER, INPUTS, PICTURE_HEIGHT, PICTURE_WIDTH, PROPRIO_SIZE  # noqa: F401
+from .eye import (  # noqa: F401  (what the arm needs of the student lives in eye.py, which needs no torch)
+    FILTER, GUESS_SIZE, INPUTS, LEAD_LIMIT_RAD, PICTURE_HEIGHT, PICTURE_WIDTH, PROPRIO_SIZE, SPEED_LIMIT_RAD_S,
+    action_from_moves, proprio_from_observation,
+)
 
-GUESS_SIZE = 2
-# The joint readings the student gets, taken from the teacher's 33 inputs: joint angles relative
-# to the start pose (6), joint speeds (6), the hold target (3), and how far each arm joint's target
-# leads the joint (5). Left out: the ball's position (3), a constant (4) and the previous output (6).
-_FROM_OBSERVATION = (*range(0, 12), *range(15, 18), *range(28, 33))
 _PROPRIO_SCALE = np.array([1.0] * 6 + [2.0] * 6 + [5.0] * 3 + [20.0] * 5, dtype=np.float32)
 BALL_SCALE = 10.0  # the network works in tenths of a metre
-SPEED_LIMIT_RAD_S = 0.3  # the limit the student's arm outputs are a share of
-LEAD_LIMIT_RAD = 0.05
 _STEP_RAD = SPEED_LIMIT_RAD_S / arm.CONTROL_HZ
-
-
-def proprio_from_observation(observation: Sequence[float]) -> np.ndarray:
-    """The student's joint readings from the teacher's 33 inputs. The ball's position is not among them."""
-    if len(observation) != 33:
-        raise ValueError(f"the teacher's observation has 33 numbers, got {len(observation)}")
-    return np.asarray([observation[i] for i in _FROM_OBSERVATION], dtype=np.float32)
 
 
 def moves_from_teacher(action: Sequence[float], scale: float) -> tuple[np.ndarray, bool]:
@@ -73,11 +62,6 @@ def moves_from_teacher(action: Sequence[float], scale: float) -> tuple[np.ndarra
     share of the allowed step, and whether the gripper is open. ``scale`` is the policy's action scale."""
     moves = np.clip(np.asarray(action[:5], dtype=np.float32) * scale / _STEP_RAD, -1.0, 1.0)
     return moves, bool(action[5] >= 0.0)
-
-
-def action_from_moves(moves: Sequence[float], gripper_open: bool, scale: float) -> list[float]:
-    """A raw output, in the teacher's terms, that produces these moves under the speed limit."""
-    return [float(np.clip(m, -1.0, 1.0)) * _STEP_RAD / scale for m in moves] + [1.0 if gripper_open else -1.0]
 
 
 # The filter's colour test, as ``understudy.eye`` and ``understudy.vision.orange_mask`` make it.

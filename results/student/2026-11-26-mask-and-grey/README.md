@@ -30,6 +30,8 @@ Of the ball's disc, 95 to 99% at the median (57% at the least, in one picture). 
 
 `scripts/real_arm.py run --camera look --eye results/student/2026-11-26-mask-and-grey/eye.onnx` uses it in place of the hand-written finder; see the main README.
 
+`driver.onnx` (0.9 MB) with `driver.json` is the whole student, memory and moves and all, one control step at a time (`understudy.eye.Driver`); it agrees with the PyTorch student to 3e-6 over 60 steps in a row. `run --camera live --driver` lets it move the arm from the camera's stream. One step takes about 1 ms on an M4 Mac (3 ms at the slowest of 300), shrinking and filtering the picture included.
+
 ## Training
 
 | Round | Student drove: lifted | First guess of the ball's place, median error |
@@ -54,6 +56,7 @@ python scripts/student_real_checks.py all --student out/student.pt --samples FOL
 | --- | --- |
 | `student.pt` | The trained student (PyTorch) |
 | `eye.onnx`, `eye.json` | Its eye, exported, and what it was trained for |
+| `driver.onnx`, `driver.json` | The whole student, exported |
 | `training.jsonl` | Each round's attempts, lifts and losses |
 | `real-pictures-all.json` | The check on every real picture |
 

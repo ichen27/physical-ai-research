@@ -55,7 +55,7 @@ Known limitations:
 | `understudy/camera_collect.py` | Has the arm take those pictures itself: notices the ball, learns its colour, chooses the poses |
 | `understudy/camera_feed.py` | Pictures from the real camera, by name, and from no other camera |
 | `understudy/seek.py` | Looks for the ball and turns the arm to face it |
-| `understudy/eye.py` | A trained student's eye on its own: where the ball is from one still picture. Needs no PyTorch |
+| `understudy/eye.py` | A trained student at the arm, with no PyTorch: its eye on one still picture, and the whole student driving from a stream of pictures |
 | `understudy/sim_look.py` | Simulated wrist-camera pictures with a different look every attempt |
 | `understudy/student.py` | A pickup policy that sees the camera's picture instead of being told where the ball is |
 | `understudy/dagger.py` | Teaches that student by having it drive while the trained policy says what it would have done |
@@ -74,7 +74,7 @@ Known limitations:
 | `scripts/camera_watch.sh` | Left running in Terminal on the Mac the camera is plugged into; takes a picture when asked |
 | `scripts/train_student.py` | Trains the picture-driven student in MuJoCo, on one computer with no GPU rental |
 | `scripts/evaluate_student.py` | Measures the student's pickup rate in MuJoCo beside the teacher's |
-| `scripts/export_eye.py` | Exports a student's eye to ONNX for the computer at the arm |
+| `scripts/export_eye.py` | Exports a student's eye, and the whole student, to ONNX for the computer at the arm |
 | `scripts/student_on_real_pictures.py` | Scores where the student says the ball is on real pictures with known ball positions |
 | `scripts/evaluate_search.py` | Measures the student searching a wide sector for the ball, with no ball, and with balls out of reach |
 | `scripts/evaluate_student_carry.py` | Measures the whole job: find the ball, pick it up, carry it to a bowl and drop it in |
@@ -262,6 +262,13 @@ python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.on
     --eye results/student/2026-11-26-mask-and-grey/eye.onnx --find_only --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: find only
 python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look \
     --eye results/student/2026-11-26-mask-and-grey/eye.onnx --max_speed 0.3 --max_lead 0.05 --seconds 15               # POWERED: and pick up
+```
+
+**A trained student driving the arm itself** (`--driver`). `run --camera live --driver FILE` goes one step further: after finding and facing the ball as `--eye` does, the student moves the arm itself, thirty times a second, from the camera's stream of pictures, in place of the policy that is told where the ball is. It is never given the ball's position. Its outputs pass through the same speed and lead limits, and the arm is lowered the same way on any stop. It stops when it has not been sure of the ball for 20 control steps in a row with the gripper still open (with the ball taken away it would otherwise carry on from memory and close on nothing), and when no new picture has arrived for 10 steps. A picture that is a step or two late is used again; it was trained on pictures up to three steps old. One step of its thinking takes about a millisecond on a Mac, against the 33 a control step lasts. Every step is recorded with what it saw and how sure it was, and the pictures it was shown are saved beside the record. `--camera live` must be started from Terminal on the Mac the camera is plugged into. **Tested against the simulated arm with pictures fed as a stream. The live stream has never been read from the real camera, and none of this has run on the real arm.**
+
+```sh
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera live \
+    --driver results/student/2026-11-26-mask-and-grey/driver.onnx --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED; from Terminal
 ```
 
 The eye in that file is from [a student given a filtered picture](results/student/2026-11-26-mask-and-grey/README.md); on 65 saved real pictures it was sure of the ball in every one and placed it to 8 mm at the median. It needs numpy, OpenCV and onnxruntime, not PyTorch. It does not need the camera's calibration file, but if the file is there the eye is checked against it.

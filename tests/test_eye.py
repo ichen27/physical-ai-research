@@ -82,6 +82,79 @@ class FinderTests(unittest.TestCase):
         self.assertIn("not sure", said[0])
 
 
+class Thinker:
+    """Stands in for an exported student: says what it is told to say, step by step."""
+
+    def __init__(self, sure, opens):
+        self.sure, self.opens, self.step_number, self.resets = list(sure), list(opens), 0, 0
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    def step(self, picture, readings, guess):
+        i = min(self.step_number, len(self.sure) - 1)
+        self.step_number += 1
+        return {"moves": np.full(5, 0.5, np.float32), "open": self.opens[min(i, len(self.opens) - 1)], "ball": (0.2, 0.03, 0.02),
+                "seen": (0.2, 0.03, 0.02), "in_view": self.sure[i]}
+
+
+class StreamDriverTests(unittest.TestCase):
+    INTERFACE = __import__("understudy.runtime", fromlist=["Interface"]).Interface("incremental", 0.1, 0.35)
+    FRAME = np.zeros((360, 640, 3), np.uint8)
+
+    def driven(self, thinker, frames, **options):
+        frames = iter(frames)
+        driver = eye.StreamDriver(thinker, lambda: next(frames), (0.2, 0.03), self.INTERFACE, **options)
+        return driver
+
+    def run_steps(self, driver, count):
+        for _ in range(count):
+            self.assertEqual(driver.position([0.0] * 5, 0.9, True), (0.0, 0.0, 0.0))  # the student is never told where the ball is
+            action = driver([0.0] * 33)
+        return action
+
+    def test_each_step_is_one_picture_one_thought_and_an_action_under_the_speed_limit(self):
+        thinker = Thinker([0.9], [True])
+        driver = self.driven(thinker, [self.FRAME] * 5)
+        action = self.run_steps(driver, 5)
+        self.assertEqual(thinker.resets, 1)  # memory cleared at the start of the attempt
+        self.assertEqual(len(action), 6)
+        self.assertAlmostEqual(action[0] * self.INTERFACE.arm_action_scale, 0.5 * eye.SPEED_LIMIT_RAD_S / arm.CONTROL_HZ, places=7)
+        self.assertEqual(action[5], 1.0)
+        self.assertEqual(len(driver.thoughts), 5)
+        self.assertEqual(driver.pictures[0].shape, (72, 128, 3))
+        self.assertEqual(driver.thoughts[0]["sure"], 0.9)
+
+    def test_a_late_picture_is_used_again_and_a_dead_stream_stops_the_run(self):
+        driver = self.driven(Thinker([0.9], [True]), [self.FRAME, None, None, self.FRAME] + [None] * 30)
+        self.run_steps(driver, 4)
+        self.assertEqual([t["picture_steps_old"] for t in driver.thoughts], [0, 1, 2, 0])
+        with self.assertRaises(eye.NotSure) as stopped:
+            self.run_steps(driver, 30)
+        self.assertIn("no new picture", str(stopped.exception))
+        self.assertEqual(len(driver.thoughts), 4 + eye.STALE_STEPS)  # ten steps on the old picture, then it stops
+
+    def test_no_picture_at_all_stops_it_at_once(self):
+        driver = self.driven(Thinker([0.9], [True]), [None])
+        with self.assertRaises(eye.NotSure):
+            driver.position([0.0] * 5, 0.9, True)
+
+    def test_it_stops_after_a_run_of_unsure_steps_with_the_gripper_open(self):
+        sure = [0.9] * 5 + [0.2] * 60
+        driver = self.driven(Thinker(sure, [True]), [self.FRAME] * 100)
+        with self.assertRaises(eye.NotSure) as stopped:
+            self.run_steps(driver, 100)
+        self.assertEqual(len(driver.thoughts), 5 + eye.UNSURE_STEPS)
+        self.assertIn("not been sure of the ball for 20 control steps", str(stopped.exception))
+
+    def test_a_short_spell_of_doubt_does_not_stop_it_nor_does_doubt_once_the_gripper_has_closed(self):
+        sure = ([0.9] * 5 + [0.2] * (eye.UNSURE_STEPS - 1)) * 3
+        self.run_steps(self.driven(Thinker(sure, [True]), [self.FRAME] * 100), len(sure))
+        # Closing on the ball hides it: the student is not expected to see it then.
+        closed = self.driven(Thinker([0.9] * 5 + [0.1] * 80, [True] * 5 + [False] * 80), [self.FRAME] * 100)
+        self.run_steps(closed, 85)
+
+
 class SeekWithAFinderTests(unittest.TestCase):
     def test_the_arm_sweeps_until_the_finder_sees_the_ball_and_reports_it_in_its_own_frame(self):
         calibration = arm.Calibration.stock()

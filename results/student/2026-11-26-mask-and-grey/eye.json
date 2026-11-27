@@ -4,7 +4,6 @@
     128,
     72
   ],
-  "output": "x, y, z of the ball in metres, then how sure the eye is that the ball is in the picture, before the sigmoid",
   "exported_from": "student.pt",
   "student_training": {
     "round": 7,
@@ -40,5 +39,6 @@
       1.6,
       0.0
     ]
-  }
+  },
+  "output": "x, y, z of the ball in metres, then how sure the eye is that the ball is in the picture, before the sigmoid"
 }
