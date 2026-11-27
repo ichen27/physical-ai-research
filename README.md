@@ -386,6 +386,8 @@ I would not want anyone to read more into this than is there.
 
 You need Python 3.11 or newer. Nothing in this section needs a GPU or a robot.
 
+The repository is `physical-ai-research`; Understudy is the project in it, and the Python package is still `understudy`. The repository was named `understudy` on GitHub until 27 November 2026, and the old address redirects here.
+
 ```sh
 git clone https://github.com/ichen27/physical-ai-research.git
 cd physical-ai-research
