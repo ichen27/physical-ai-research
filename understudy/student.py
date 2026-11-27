@@ -81,14 +81,80 @@ def action_from_moves(moves: Sequence[float], gripper_open: bool, scale: float) 
     return [float(np.clip(m, -1.0, 1.0)) * _STEP_RAD / scale for m in moves] + [1.0 if gripper_open else -1.0]
 
 
+# What the network is shown of each picture. "colour" is the picture as it is. The other two put it
+# through a fixed filter first, the same for simulated and real pictures, so that what the ball's
+# colour happens to be is dealt with once, in the filter: "mask" is only which pixels are the ball's
+# colour, and "mask+grey" is that beside the picture in grey, in which the fingers and the desk still show.
+INPUTS = {"colour": 3, "mask": 1, "mask+grey": 2}
+# The filter's colour test, after the grey veil is taken off, as ``understudy.vision.orange_mask`` makes it.
+# Wide: red through orange to yellow, and pale. Other things pass it too; telling them from the ball is the network's job.
+FILTER_HUE_DEG = (0.0, 55.0)
+FILTER_SATURATION_MIN = 0.25
+FILTER_VALUE_MIN = 0.22
+FILTER_VEIL_MAX = 90.0
+
+
+def ball_coloured(pictures: torch.Tensor) -> torch.Tensor:
+    """Which pixels are the ball's colour: N x height x width, 1 or 0, from N x 3 x height x width pictures
+    (blue, green, red, 0 to 255). The same test as ``understudy.vision.orange_mask`` with the constants above."""
+    pixels = pictures.float()
+    darkest = pixels.amin(dim=1)[:, ::4, ::4].flatten(1).sort(dim=1).values
+    # The level of the darkest half percent, as numpy's percentile gives it.
+    at = 0.005 * (darkest.shape[1] - 1)
+    low, part = int(math.floor(at)), at - math.floor(at)
+    veil = (darkest[:, low] * (1.0 - part) + darkest[:, min(low + 1, darkest.shape[1] - 1)] * part).clamp(max=FILTER_VEIL_MAX)
+    pixels = (pixels - veil[:, None, None, None]).clamp(min=0.0)
+    blue, green, red = pixels[:, 0], pixels[:, 1], pixels[:, 2]
+    high = pixels.amax(dim=1)
+    spread = high - pixels.amin(dim=1)
+    hue = torch.rad2deg(torch.atan2(math.sqrt(3.0) * (green - blue), 2.0 * red - green - blue))
+    saturation = spread / high.clamp(min=1.0)
+    value = high / (255.0 - veil).clamp(min=1.0)[:, None, None]
+    return ((hue >= FILTER_HUE_DEG[0]) & (hue <= FILTER_HUE_DEG[1])
+            & (saturation >= FILTER_SATURATION_MIN) & (value >= FILTER_VALUE_MIN)).float()
+
+
+def spoiled(mask: torch.Tensor) -> torch.Tensor:
+    """A mask as a real one comes: with specks that are not the ball, a hole in the ball, a bite out of it.
+
+    Used in training only. In real pictures a speckled desk passes the colour test in
+    patches of specks (3 to 4% of the picture, 8% at most, in 65 pictures), the ball's
+    brightest spot can fail it and leave a hole, and its blown-out side a crescent.
+    """
+    count, rows, columns = mask.shape
+    device = mask.device
+    # Specks, in patches: thick in some parts of the picture and absent from others.
+    patches = torch.nn.functional.interpolate(torch.rand(count, 1, 5, 8, device=device), size=(rows, columns),
+                                              mode="bilinear", align_corners=False)[:, 0] ** 3
+    amount = torch.rand(count, 1, 1, device=device) ** 2 * 0.6  # most pictures have few, some have many
+    out = torch.maximum(mask, (torch.rand_like(mask) < patches * amount).float())
+    v, u = torch.meshgrid(torch.arange(rows, device=device), torch.arange(columns, device=device), indexing="ij")
+    area = mask.flatten(1).sum(1)
+    weight = area.clamp(min=1.0)
+    middle_u, middle_v = (mask * u).flatten(1).sum(1) / weight, (mask * v).flatten(1).sum(1) / weight
+
+    def without_disc(image: torch.Tensor, share: float, off: float, radius: tuple[float, float]) -> torch.Tensor:
+        centre_u = middle_u + torch.empty(count, device=device).uniform_(-off, off)
+        centre_v = middle_v + torch.empty(count, device=device).uniform_(-off, off)
+        size = torch.empty(count, device=device).uniform_(*radius)
+        chosen = (torch.rand(count, device=device) < share) & (area > 0)
+        disc = ((u[None] - centre_u[:, None, None]) ** 2 + (v[None] - centre_v[:, None, None]) ** 2) < (size**2)[:, None, None]
+        return torch.where(disc & chosen[:, None, None], torch.zeros_like(image), image)
+
+    out = without_disc(out, 0.3, 4.0, (1.0, 4.0))  # a hole
+    return without_disc(out, 0.3, 12.0, (3.0, 12.0))  # a bite
+
+
 class StudentNet(nn.Module):
     """Picture and joint readings in; arm moves, gripper and ball estimates out."""
 
-    def __init__(self, width: int = 128):
+    def __init__(self, width: int = 128, input: str = "colour"):
         super().__init__()
-        self.width = width
+        if input not in INPUTS:
+            raise ValueError(f"input must be one of {', '.join(INPUTS)}")
+        self.width, self.input = width, input
         self.eye = nn.Sequential(
-            nn.Conv2d(3, 24, 5, stride=2, padding=2), nn.ReLU(),
+            nn.Conv2d(INPUTS[input], 24, 5, stride=2, padding=2), nn.ReLU(),
             nn.Conv2d(24, 32, 3, stride=2, padding=1), nn.ReLU(),
             nn.Conv2d(32, 48, 3, padding=1), nn.ReLU(),
             nn.Conv2d(48, 64, 3, padding=1),
@@ -104,6 +170,18 @@ class StudentNet(nn.Module):
         self.memory = nn.GRU(width + GUESS_SIZE, width, batch_first=True)
         self.act = nn.Sequential(nn.Linear(2 * width + GUESS_SIZE, width), nn.ReLU(), nn.Linear(width, 9))  # 5 moves, gripper, ball x y z
 
+    def shown(self, pictures: torch.Tensor) -> torch.Tensor:
+        """What the network is given of N x 3 x height x width colour pictures: 0 to 255, in as many layers as its input has."""
+        if self.input == "colour":
+            return pictures.float()
+        mask = ball_coloured(pictures)
+        if self.training:
+            mask = spoiled(mask)
+        layers = [mask * 255.0]
+        if self.input == "mask+grey":
+            layers.append(pictures.float().mean(dim=1))
+        return torch.stack(layers, dim=1)
+
     def look(self, pictures: torch.Tensor, proprio: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """What one picture and one set of joint readings say, without memory.
 
@@ -111,7 +189,7 @@ class StudentNet(nn.Module):
         Returns the features passed on to the memory and the ball seen (N x 4: x, y, z in
         metres, then how sure it is that the ball is in view, before the sigmoid).
         """
-        features = self.eye(pictures.float() / 255.0 - 0.5)
+        features = self.eye(self.shown(pictures) / 255.0 - 0.5)
         flat = features.flatten(2)
         # Where each feature fires in the picture: a soft arg-max, which suits "where is the ball".
         weights = torch.softmax(flat, dim=2)
@@ -143,12 +221,12 @@ class StudentNet(nn.Module):
 
 
 def save(net: StudentNet, path: str | Path, **notes) -> None:
-    torch.save({"width": net.width, "weights": net.state_dict(), "notes": notes}, str(path))
+    torch.save({"width": net.width, "input": net.input, "weights": net.state_dict(), "notes": notes}, str(path))
 
 
 def load(path: str | Path) -> tuple[StudentNet, dict]:
     saved = torch.load(str(path), map_location="cpu", weights_only=True)
-    net = StudentNet(saved["width"])
+    net = StudentNet(saved["width"], saved.get("input", "colour"))
     net.load_state_dict(saved["weights"])
     return net.eval(), saved.get("notes", {})
 
