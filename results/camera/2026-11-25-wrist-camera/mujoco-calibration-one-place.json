@@ -1,0 +1,55 @@
+{
+  "simulator": "MuJoCo 3.3.7, vendor model, rendered wrist camera",
+  "seed": 7,
+  "places": 1,
+  "sightings": 23,
+  "arm_zero_error_ticks": 0.0,
+  "arm_touched_the_desk_steps": 0,
+  "fit": {
+    "pixel_rms": 0.1357351910339569,
+    "desk_rms_mm": 0.15299207098344195,
+    "desk_worst_mm": 0.43199971174511886,
+    "fitted_lens": false,
+    "ambiguous": false,
+    "places_moved": []
+  },
+  "camera": {
+    "focal_px": {
+      "fitted": 261.0875085684207,
+      "true": 260.0
+    },
+    "centre_px": {
+      "fitted": [
+        320.0,
+        180.0
+      ],
+      "true": [
+        320.0,
+        180.0
+      ]
+    },
+    "distortion": {
+      "fitted": 0.0,
+      "true": 0.0
+    },
+    "mount_xyz_m": {
+      "fitted": [
+        -0.06085100990748125,
+        0.003923231854361104,
+        0.034984852427964265
+      ],
+      "true": [
+        -0.06,
+        0.004,
+        0.035
+      ]
+    },
+    "mount_position_error_mm": 0.8545997073218887
+  },
+  "balls_in_new_places_from_the_start_pose": {
+    "tried": 100,
+    "not_seen": 0,
+    "median_error_mm": 0.1464807821341317,
+    "worst_error_mm": 0.23621356042194533
+  }
+}

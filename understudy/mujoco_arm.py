@@ -26,6 +26,23 @@ SUBSTEPS = 16
 TIMESTEP = 1.0 / (arm.CONTROL_HZ * SUBSTEPS)
 # Time since arrival given to the pose an attempt starts in, so it counts as long since reached.
 _SETTLED_S = 10.0
+WRIST_CAMERA = "wrist"
+
+
+def sim_wrist_camera():
+    """The simulated arm's wrist camera: a stand-in mounted where the first real arm's seems to be.
+
+    Just above the gripper's palm, looking along the gripper and tipped a little towards
+    its underside, so that the open fingers are out of the picture and the closed ones fill
+    the bottom of it, as in the real camera's pictures. Half the real picture's size, to
+    render quickly, with the same field of view as a first estimate of the real lens.
+    """
+    from dataclasses import replace
+
+    from .camera_model import WristCamera
+
+    camera = WristCamera.looking_along_gripper(640, 360, 260.0, back_m=0.06, up_m=0.035, tilt_down_rad=0.45)
+    return replace(camera, mount_xyz=(-0.06, 0.004, 0.035))
 
 
 def build_model(
@@ -33,12 +50,23 @@ def build_model(
     ball_friction: float = pickup.BALL_FRICTION,
     stiffness_scale: float = 1.0,
     claw_fingers: bool = True,
+    wrist_camera=None,
+    extras=None,
 ) -> mujoco.MjModel:
     """The vendor arm on a desk with a ball. ``stiffness_scale`` multiplies the arm servo gains.
 
     With ``claw_fingers`` the fingers collide as the curved claws they are, using the same
     convex pieces as the Isaac Lab arm. Without it they collide as the vendor model has them,
     as the convex hull of each finger, which fills the hollow between the claws.
+
+    ``wrist_camera`` (an ``understudy.camera_model.WristCamera``) adds a camera named
+    ``wrist`` on the gripper, for ``RenderedCamera``. MuJoCo's camera has no lens
+    distortion and looks through the middle of its picture, so only the size, focal
+    length and mount of the one given are used.
+
+    ``extras`` is called with the model's description just before it is compiled, to add
+    things to the scene (``understudy.sim_look.dress`` adds what varied pictures need,
+    ``understudy.sim_bowl.add_bowl`` a bowl).
     """
     if stiffness_scale <= 0:
         raise ValueError("stiffness_scale must be positive")
@@ -66,6 +94,23 @@ def build_model(
         friction=[ball_friction, 0.005, 0.0001],
         rgba=[1.0, 0.4, 0.0, 1.0],
     )
+    if wrist_camera is not None:
+        from .camera_model import rotation_from_vector
+
+        # MuJoCo cameras look along their own -z with +y up; the camera model looks along +z with +y down.
+        axes = rotation_from_vector(wrist_camera.mount_rotation) @ np.diag([1.0, -1.0, -1.0])
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, axes.flatten())
+        spec.body(arm.END_EFFECTOR_LINK).add_camera(
+            name=WRIST_CAMERA, pos=list(wrist_camera.mount_xyz), quat=quat,
+            fovy=math.degrees(2.0 * math.atan(wrist_camera.height / (2.0 * wrist_camera.focal_px))),
+        )
+        for geom in spec.body(arm.END_EFFECTOR_LINK).geoms:
+            geom.rgba[3] = 0.0  # the vendor model marks the gripper tip with a red box that no real arm has
+        spec.visual.global_.offwidth = max(spec.visual.global_.offwidth, wrist_camera.width)
+        spec.visual.global_.offheight = max(spec.visual.global_.offheight, wrist_camera.height)
+    if extras is not None:
+        extras(spec)
     model = spec.compile()
     for joint in arm.ARM_JOINTS:
         index = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, joint.name)
@@ -127,6 +172,14 @@ class MujocoArm:
     def ball(self) -> np.ndarray:
         return self.data.xpos[self._ball_body].copy()
 
+    def place_ball(self, ball_xy: Sequence[float]) -> None:
+        """Put the ball down at rest somewhere else, leaving the arm as it is."""
+        self.data.qpos[self._ball_qpos : self._ball_qpos + 3] = [ball_xy[0], ball_xy[1], pickup.BALL_RADIUS_M]
+        self.data.qpos[self._ball_qpos + 3 : self._ball_qpos + 7] = [1, 0, 0, 0]
+        ball_dof = int(self.model.body_dofadr[self._ball_body])
+        self.data.qvel[ball_dof : ball_dof + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
     def joint_angles(self) -> list[float]:
         return [float(self.data.qpos[a]) for a in self._qpos]
 
@@ -148,6 +201,18 @@ class MujocoArm:
         c = self.calibration
         targets = c.to_rad(ticks[:5]) + [c.finger_to_rad(ticks[5])]
         self._sent.insert(0, (targets, 0.0))
+
+    def move_slowly(self, ticks: Sequence[int], seconds: float) -> None:
+        """Move to a pose over ``seconds`` and let it settle, as the real arm's driver does."""
+        start = self.read().positions
+        steps = max(1, int(round(seconds * arm.CONTROL_HZ)))
+        for step in range(1, steps + 1):
+            # Ease in and out, like the servos' own profile.
+            part = 0.5 - 0.5 * math.cos(math.pi * step / steps)
+            self.write_goals([int(round(a + (b - a) * part)) for a, b in zip(start, ticks)])
+            self.advance()
+        for _ in range(int(0.5 * arm.CONTROL_HZ)):
+            self.advance()
 
     def advance(self) -> None:
         for _ in range(SUBSTEPS):
@@ -186,3 +251,68 @@ class SimulatedCamera:
         self._reports = [self._sim.ball(), *self._reports[:-1]]
         noise = np.array([self._rng.uniform(-self._noise, self._noise) for _ in range(3)])
         return tuple(float(v) for v in self._reports[-1] + self._bias + noise)
+
+
+class RenderedCamera:
+    """The simulated wrist camera: renders its picture and finds the ball in it with the real detector.
+
+    The model must have been built with ``wrist_camera``. Rendering needs OpenGL;
+    where there is none, creating this raises and ``ProjectedCamera`` can stand in.
+    ``latency_steps`` is how many control steps old each picture is when it is used.
+    """
+
+    def __init__(self, sim: MujocoArm, camera, colour=None, latency_steps: int = 0):
+        from . import vision
+
+        self._vision = vision
+        self._sim = sim
+        self._renderer = mujoco.Renderer(sim.model, height=camera.height, width=camera.width)
+        self.colour = colour or vision.BallColour()
+        self._latency = latency_steps
+        self._waiting: list = []
+
+    def picture(self) -> np.ndarray:
+        """The camera's picture now, blue-green-red."""
+        self._renderer.update_scene(self._sim.data, camera=WRIST_CAMERA)
+        return np.ascontiguousarray(self._renderer.render()[:, :, ::-1])
+
+    def look(self):
+        """Patches of the ball's colour in the picture from ``latency_steps`` ago."""
+        self._waiting = [self._vision.find_blobs(self.picture(), self.colour), *self._waiting[: self._latency]]
+        return self._waiting[-1]
+
+    def close(self) -> None:
+        self._renderer.close()
+
+
+class ProjectedCamera:
+    """The simulated wrist camera without rendering: where geometry says the ball appears.
+
+    For machines with no OpenGL. It knows the edges of the picture but not the
+    fingers: a ball between them is reported as seen whole, which a rendered or
+    real picture would not show. ``pixel_noise`` jitters the centre each frame.
+    """
+
+    def __init__(self, sim: MujocoArm, camera, rng: random.Random | None = None, pixel_noise: float = 0.0,
+                 latency_steps: int = 0):
+        from . import vision
+        from .kinematics import Chain
+
+        self._vision, self._sim, self._camera = vision, sim, camera
+        self._chain = Chain()
+        self._rng, self._noise = rng or random.Random(0), pixel_noise
+        self._latency = latency_steps
+        self._waiting: list = []
+
+    def look(self):
+        sight = self._camera.sight(self._sim.ball(), self._sim.joint_angles()[:5], self._chain)
+        blobs = []
+        if sight is not None:
+            c = self._camera
+            r = sight.radius_px
+            if -r < sight.u < c.width + r and -r < sight.v < c.height + r:
+                u = sight.u + self._rng.gauss(0.0, self._noise)
+                v = sight.v + self._rng.gauss(0.0, self._noise)
+                blobs = [self._vision.Blob(u, v, r, 1.0 if sight.inside else 0.5, not sight.inside, math.pi * r * r)]
+        self._waiting = [blobs, *self._waiting[: self._latency]]
+        return self._waiting[-1]

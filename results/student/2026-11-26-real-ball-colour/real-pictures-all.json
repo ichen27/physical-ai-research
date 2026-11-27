@@ -1,0 +1,477 @@
+{
+  "check": "all",
+  "student": "student.pt",
+  "student_input": "colour",
+  "pictures_showing_the_ball_whole": 65,
+  "sure_the_ball_is_there": "62 of 65",
+  "by_set": {
+    "cal2": "21 of 21",
+    "cal4": "36 of 39",
+    "find1": "5 of 5"
+  },
+  "with_recorded_pose_and_known_ball_place": {
+    "pictures": 19,
+    "sure": "18 of 19",
+    "error_mm_median": 7.0,
+    "error_mm_worst": 11.9,
+    "within_10_mm": 17
+  },
+  "median_sureness": 0.88,
+  "pictures": [
+    {
+      "set": "cal2",
+      "picture": "cal-83186-001.jpg",
+      "pose_recorded": false,
+      "sure": 0.88,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-002.jpg",
+      "pose_recorded": false,
+      "sure": 0.828,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-003.jpg",
+      "pose_recorded": false,
+      "sure": 0.847,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-004.jpg",
+      "pose_recorded": false,
+      "sure": 0.842,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-005.jpg",
+      "pose_recorded": false,
+      "sure": 0.819,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-006.jpg",
+      "pose_recorded": false,
+      "sure": 0.825,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-007.jpg",
+      "pose_recorded": false,
+      "sure": 0.828,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-008.jpg",
+      "pose_recorded": false,
+      "sure": 0.868,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-009.jpg",
+      "pose_recorded": false,
+      "sure": 0.794,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-010.jpg",
+      "pose_recorded": false,
+      "sure": 0.869,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-011.jpg",
+      "pose_recorded": false,
+      "sure": 0.893,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-012.jpg",
+      "pose_recorded": false,
+      "sure": 0.876,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-013.jpg",
+      "pose_recorded": false,
+      "sure": 0.856,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-014.jpg",
+      "pose_recorded": false,
+      "sure": 0.838,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-016.jpg",
+      "pose_recorded": false,
+      "sure": 0.777,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-017.jpg",
+      "pose_recorded": false,
+      "sure": 0.667,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-018.jpg",
+      "pose_recorded": false,
+      "sure": 0.919,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-019.jpg",
+      "pose_recorded": false,
+      "sure": 0.996,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-020.jpg",
+      "pose_recorded": false,
+      "sure": 0.828,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-021.jpg",
+      "pose_recorded": false,
+      "sure": 0.989,
+      "error_mm": null
+    },
+    {
+      "set": "cal2",
+      "picture": "cal-83186-022.jpg",
+      "pose_recorded": false,
+      "sure": 0.839,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-005.jpg",
+      "pose_recorded": false,
+      "sure": 0.976,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-009.jpg",
+      "pose_recorded": false,
+      "sure": 0.89,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-010.jpg",
+      "pose_recorded": false,
+      "sure": 0.916,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-011.jpg",
+      "pose_recorded": false,
+      "sure": 0.891,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-012.jpg",
+      "pose_recorded": false,
+      "sure": 0.92,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-013.jpg",
+      "pose_recorded": true,
+      "sure": 0.902,
+      "error_mm": 6.0
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-014.jpg",
+      "pose_recorded": false,
+      "sure": 0.256,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-015.jpg",
+      "pose_recorded": true,
+      "sure": 0.819,
+      "error_mm": 11.9
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-016.jpg",
+      "pose_recorded": false,
+      "sure": 0.83,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-017.jpg",
+      "pose_recorded": true,
+      "sure": 0.953,
+      "error_mm": 4.9
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-018.jpg",
+      "pose_recorded": true,
+      "sure": 0.942,
+      "error_mm": 7.0
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-019.jpg",
+      "pose_recorded": true,
+      "sure": 0.801,
+      "error_mm": 7.5
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-020.jpg",
+      "pose_recorded": true,
+      "sure": 0.962,
+      "error_mm": 7.9
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-021.jpg",
+      "pose_recorded": true,
+      "sure": 0.806,
+      "error_mm": 0.7
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-022.jpg",
+      "pose_recorded": true,
+      "sure": 0.855,
+      "error_mm": 2.6
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-023.jpg",
+      "pose_recorded": true,
+      "sure": 0.595,
+      "error_mm": 2.1
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-024.jpg",
+      "pose_recorded": true,
+      "sure": 0.398,
+      "error_mm": 10.5
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-025.jpg",
+      "pose_recorded": true,
+      "sure": 0.986,
+      "error_mm": 7.3
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-026.jpg",
+      "pose_recorded": true,
+      "sure": 0.994,
+      "error_mm": 8.3
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-027.jpg",
+      "pose_recorded": true,
+      "sure": 0.785,
+      "error_mm": 7.6
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-028.jpg",
+      "pose_recorded": true,
+      "sure": 0.86,
+      "error_mm": 4.9
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-029.jpg",
+      "pose_recorded": true,
+      "sure": 0.964,
+      "error_mm": 5.7
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-030.jpg",
+      "pose_recorded": true,
+      "sure": 0.916,
+      "error_mm": 2.1
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-031.jpg",
+      "pose_recorded": true,
+      "sure": 0.972,
+      "error_mm": 8.6
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-032.jpg",
+      "pose_recorded": true,
+      "sure": 0.882,
+      "error_mm": 8.3
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-033.jpg",
+      "pose_recorded": false,
+      "sure": 0.621,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-034.jpg",
+      "pose_recorded": false,
+      "sure": 0.116,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-035.jpg",
+      "pose_recorded": true,
+      "sure": 0.996,
+      "error_mm": 3.1
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-036.jpg",
+      "pose_recorded": false,
+      "sure": 0.588,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-037.jpg",
+      "pose_recorded": false,
+      "sure": 0.529,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-039.jpg",
+      "pose_recorded": false,
+      "sure": 0.992,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-044.jpg",
+      "pose_recorded": false,
+      "sure": 0.918,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-045.jpg",
+      "pose_recorded": false,
+      "sure": 0.984,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-046.jpg",
+      "pose_recorded": false,
+      "sure": 0.969,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-047.jpg",
+      "pose_recorded": false,
+      "sure": 0.971,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-048.jpg",
+      "pose_recorded": false,
+      "sure": 0.972,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-049.jpg",
+      "pose_recorded": false,
+      "sure": 0.978,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-050.jpg",
+      "pose_recorded": false,
+      "sure": 0.977,
+      "error_mm": null
+    },
+    {
+      "set": "cal4",
+      "picture": "cal-88650-051.jpg",
+      "pose_recorded": false,
+      "sure": 0.977,
+      "error_mm": null
+    },
+    {
+      "set": "find1",
+      "picture": "run-92083-004.jpg",
+      "pose_recorded": false,
+      "sure": 0.813,
+      "error_mm": null
+    },
+    {
+      "set": "find1",
+      "picture": "run-92083-005.jpg",
+      "pose_recorded": false,
+      "sure": 0.992,
+      "error_mm": null
+    },
+    {
+      "set": "find1",
+      "picture": "run-92083-006.jpg",
+      "pose_recorded": false,
+      "sure": 0.985,
+      "error_mm": null
+    },
+    {
+      "set": "find1",
+      "picture": "run-92083-007.jpg",
+      "pose_recorded": false,
+      "sure": 0.986,
+      "error_mm": null
+    },
+    {
+      "set": "find1",
+      "picture": "run-92083-008.jpg",
+      "pose_recorded": false,
+      "sure": 0.908,
+      "error_mm": null
+    }
+  ]
+}

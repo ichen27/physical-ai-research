@@ -4,3 +4,5 @@
 mujoco==3.3.7
 numpy
 onnxruntime
+# The ball detector for the arm's camera reads and searches pictures with OpenCV.
+opencv-python-headless
