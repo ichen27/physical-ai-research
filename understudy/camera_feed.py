@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -112,12 +112,15 @@ class LiveCamera:
     positions are reported in whatever size the stream is.
     """
 
+    # Options that ask ffmpeg not to hold pictures back. Not yet the default: their effect on this camera is unmeasured.
+    LOW_DELAY = ("-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0")
+
     def __init__(self, width: int = 640, height: int = 360, full_width: int = 1280, ffmpeg: str = "ffmpeg",
-                 command: list[str] | None = None):
+                 command: list[str] | None = None, input_options: Sequence[str] = ()):
         if command is None:
             name = find_camera(ffmpeg)
             command = [
-                ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-pixel_format", "uyvy422",
+                ffmpeg, "-hide_banner", "-loglevel", "error", *input_options, "-f", "avfoundation", "-pixel_format", "uyvy422",
                 "-framerate", "30", "-video_size", f"{full_width}x{full_width * height // width}", "-i", f"{name}:none",
                 "-vf", f"scale={width}:{height}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-",
             ]
@@ -127,6 +130,7 @@ class LiveCamera:
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
         self._number = 0
+        self._arrived = 0.0
         self._taken = 0
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
@@ -143,7 +147,7 @@ class LiveCamera:
                 data += chunk
             frame = np.frombuffer(bytes(data), dtype=np.uint8).reshape(self.height, self.width, 3)
             with self._lock:
-                self._frame, self._number = frame, self._number + 1
+                self._frame, self._number, self._arrived = frame, self._number + 1, time.monotonic()
 
     def wait_for_first(self, timeout_s: float = 10.0) -> None:
         """Wait until pictures are arriving. Raises with the camera program's own complaint if they never do."""
@@ -172,6 +176,11 @@ class LiveCamera:
                 return None
             self._taken = self._number
             return self._frame
+
+    def arrival(self) -> tuple[int, float]:
+        """The newest picture's number, counting from one, and when it arrived (``time.monotonic``). (0, 0.0) before the first."""
+        with self._lock:
+            return self._number, self._arrived
 
     def newest(self) -> np.ndarray:
         """The newest picture whether or not it was already taken. Raises if none has arrived."""

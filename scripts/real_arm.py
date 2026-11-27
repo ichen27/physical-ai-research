@@ -702,7 +702,10 @@ def cmd_run(args) -> None:
                             if args.compare_finders:
                                 number = len(looks)
                                 told(f"look-pose look {number}", "eye", look["eye"], f" sure={look['sure']:.2f}")
-                                told(f"look-pose look {number}", "finder", look.get("other_finder"))
+                                if "other_finder" in look:
+                                    told(f"look-pose look {number}", "finder", look["other_finder"])
+                                else:  # the eye was not sure, so the other finder was never asked
+                                    print(f"place look-pose look {number} finder: not asked", flush=True)
                             return point
 
                         facing = seek.face_ball(robot, calibration, None, None, find=find, sweep=sweep, confirm=True)

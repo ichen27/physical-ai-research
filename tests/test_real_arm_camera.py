@@ -509,6 +509,16 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
         self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
         self.assertFalse(self.bench.robot.torque_on)
 
+    def test_comparing_says_when_the_other_finder_was_never_asked(self):
+        path = self.with_camera_file()
+        try:
+            out = self.run_pickup((0.6, 0.5), compare_finders=True, find_only=True, sweep_deg=0.0)  # no ball in view
+        finally:
+            path.unlink()
+        self.assertRegex(out, r"place look-pose look 1 eye: .* sure=0\.0\d")
+        self.assertIn("place look-pose look 1 finder: not asked", out, out)
+        self.assertNotIn("place start-pose", out)
+
     def test_comparing_does_not_veto_a_ball_the_hand_written_finder_cannot_see(self):
         path = self.with_camera_file(hue_low=100.0, hue_high=140.0, saturation_min=0.3, value_min=0.2, veil_max=90.0)
         try:

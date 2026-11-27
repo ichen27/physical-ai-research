@@ -75,6 +75,7 @@ Known limitations:
 | `scripts/train_student.py` | Trains the picture-driven student in MuJoCo, on one computer with no GPU rental |
 | `scripts/evaluate_student.py` | Measures the student's pickup rate in MuJoCo beside the teacher's |
 | `scripts/export_eye.py` | Exports a student's eye, and the whole student, to ONNX for the computer at the arm |
+| `scripts/stream_lateness.py` | Measures how late the live camera's pictures are, with the arm limp, by swinging the swivel by hand. Reads only |
 | `scripts/student_on_real_pictures.py` | Scores where the student says the ball is on real pictures with known ball positions |
 | `scripts/evaluate_search.py` | Measures the student searching a wide sector for the ball, with no ball, and with balls out of reach |
 | `scripts/evaluate_student_carry.py` | Measures the whole job: find the ball, pick it up, carry it to a bowl and drop it in |
