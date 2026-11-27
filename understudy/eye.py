@@ -55,6 +55,9 @@ _STEP_RAD = SPEED_LIMIT_RAD_S / arm.CONTROL_HZ
 UNSURE_STEPS = 20
 # And when no new picture has arrived for this many control steps (a third of a second).
 STALE_STEPS = 10
+# Asked to check the eye against the hand-written finder, the two must put the ball within this of each other.
+# In simulation they are 6 mm apart at the median and 10 mm at the 90th percentile on a real ball.
+AGREE_M = 0.025
 
 
 def proprio_from_observation(observation: Sequence[float]) -> np.ndarray:
@@ -128,7 +131,8 @@ class Eye:
 
 
 def finder(eye: Eye, picture: Callable[[], np.ndarray], sure: float = SURE,
-           say: Callable[[str], None] = print) -> Callable[..., tuple[float, float, float] | None]:
+           say: Callable[[str], None] = print, second: Callable | None = None, agree_m: float = AGREE_M,
+           looks: list | None = None, must_agree: bool = True) -> Callable[..., tuple[float, float, float] | None]:
     """A ball finder for ``understudy.seek``: takes a picture now and asks the eye.
 
     The returned function is given the arm's joint angles in whatever frame the caller is
@@ -136,15 +140,43 @@ def finder(eye: Eye, picture: Callable[[], np.ndarray], sure: float = SURE,
     the ball is in the picture. The eye was taught looks from an arm facing straight ahead,
     so a look from a swivelled arm is shown to it as one from straight ahead in a frame
     turned by the swivel, and its answer is turned back.
+
+    ``second`` is another finder to check the eye against: it is given the same picture,
+    the same joint angles and the eye's answer, and returns where it puts the ball, or None.
+    With it, a ball counts only if both find one and they are within ``agree_m`` of each
+    other; what is said tells the two ways of failing apart. With ``must_agree`` false the
+    second finder is only reported and recorded, and the eye alone decides. ``looks``, a
+    list, is given a record of every look: the joint angles, how sure the eye was, and what
+    each finder said.
     """
     def find(joint_angles: Sequence[float], near: Sequence[float] | None = None) -> tuple[float, float, float] | None:
         swivel = float(joint_angles[0])
-        point, how_sure = eye.glance(picture(), (0.0, *joint_angles[1:5]))
+        frame = picture()
+        point, how_sure = eye.glance(frame, (0.0, *joint_angles[1:5]))
+        there = in_turned_frame((point[0], point[1], pickup.BALL_RADIUS_M), -swivel)
+        look = {"joint_angles": [round(float(a), 4) for a in joint_angles[:5]], "sure": round(how_sure, 3),
+                "eye": [round(v, 4) for v in there[:2]]}
+        if looks is not None:
+            looks.append(look)
         if how_sure < sure:
             say(f"  the eye is not sure there is a ball in this picture ({how_sure:.2f}; it needs {sure:.2f})")
             return None
-        say(f"  the eye sees the ball ({how_sure:.2f} sure)")
-        return in_turned_frame((point[0], point[1], pickup.BALL_RADIUS_M), -swivel)
+        if second is None:
+            say(f"  the eye sees the ball ({how_sure:.2f} sure)")
+            return there
+        other = second(frame, joint_angles, there)
+        look["other_finder"] = None if other is None else [round(float(v), 4) for v in other[:2]]
+        if other is None:
+            say(f"  the eye sees a ball ({how_sure:.2f} sure) but the hand-written finder sees none in the same picture"
+                + (": not taken as the ball" if must_agree else ""))
+            return None if must_agree else there
+        apart = math.dist(other[:2], there[:2])
+        if apart > agree_m:
+            say(f"  the eye ({how_sure:.2f} sure) and the hand-written finder put the ball {apart * 100:.1f} cm apart in the same picture"
+                + (f"; at most {agree_m * 100:.1f} cm is allowed: not taken as the ball" if must_agree else ""))
+            return None if must_agree else there
+        say(f"  the eye sees the ball ({how_sure:.2f} sure) and the hand-written finder agrees to {apart * 1000:.0f} mm")
+        return there
 
     return find
 

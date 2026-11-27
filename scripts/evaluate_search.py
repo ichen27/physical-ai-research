@@ -86,6 +86,8 @@ def main() -> None:
                         help="Balls are put where facing them means turning up to this far either way.")
     parser.add_argument("--max_turn_deg", type=float,
                         help="Let the arm turn this far to face a ball, instead of the usual limit. For finding out what going wider costs.")
+    parser.add_argument("--sure_twice", action="store_true",
+                        help="Refuse a ball the student does not see again after turning to face it, as the real-arm tool does with --eye.")
     parser.add_argument("--bare_desk", action="store_true", help="With --part no-ball: nothing at all on the desk, not even the other things.")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--output", help="Write the results to this JSON file.")
@@ -117,7 +119,7 @@ def main() -> None:
             outcome, _ = dagger.run_attempt(sim, scene, rng, teacher=teacher, drive="teacher", facing="exact", seconds=seconds, ball=ball)
         else:
             outcome, _ = dagger.run_attempt(sim, scene, rng, brain=brain, drive="student", facing="search", seconds=seconds,
-                                            ball=ball, ball_present=args.part != "no-ball")
+                                            ball=ball, ball_present=args.part != "no-ball", confirm=args.sure_twice)
         rows.append({**outcome, "turn_deg": round(math.degrees(turn), 2), "distance_cm": round(100 * distance, 2)})
 
     result = {
@@ -133,6 +135,7 @@ def main() -> None:
         "sweep_of_looks_rad": list(seek.SCAN),
         "look_pose": list(seek.LOOK_POSE),
         "arm_turns_to_face_at_most_deg": round(math.degrees(runner.MAX_TURN_RAD), 1),
+        "ball_must_be_seen_again_after_facing": args.sure_twice,
         "minutes": round((time.monotonic() - started) / 60, 1),
     }
     if args.part in ("student", "teacher"):

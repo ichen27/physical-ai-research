@@ -75,6 +75,34 @@ class FinderTests(unittest.TestCase):
             self.assertAlmostEqual(got, want, places=9)
         self.assertGreater(point[1], 0.1)  # a ball seen ahead of an arm turned to the left is to the left
 
+    def test_checked_against_a_second_finder_the_two_must_agree(self):
+        looks, said = [], []
+        seen = {}
+
+        def second(picture, joint_angles, near):
+            seen.update(picture=picture, joint_angles=tuple(joint_angles), near=near)
+            return seen["answer"]
+
+        find = eye.finder(Looker(), lambda: "the picture", say=said.append, second=second, looks=looks)
+        angles = (0.5, *seek.LOOK_POSE[1:])
+        there = in_turned_frame((0.2, 0.03, pickup.BALL_RADIUS_M), -0.5)
+        seen["answer"] = (there[0] + 0.006, there[1], there[2])
+        self.assertIsNotNone(find(angles))
+        self.assertEqual(seen["picture"], "the picture")  # the very picture the eye was shown
+        self.assertEqual(seen["joint_angles"], angles)  # in the caller's frame, swivel and all
+        self.assertIn("agrees to 6 mm", said[-1])
+        seen["answer"] = (there[0] + 0.04, there[1], there[2])
+        self.assertIsNone(find(angles))
+        self.assertIn("4.0 cm apart", said[-1])
+        seen["answer"] = None
+        self.assertIsNone(find(angles))
+        self.assertIn("hand-written finder sees none", said[-1])
+        self.assertEqual(len(looks), 3)
+        self.assertEqual(looks[0]["joint_angles"][0], 0.5)
+        self.assertEqual(looks[0]["sure"], 0.9)
+        self.assertIsNone(looks[2]["other_finder"])
+        self.assertAlmostEqual(looks[1]["other_finder"][0] - looks[1]["eye"][0], 0.04, places=4)
+
     def test_an_eye_that_is_not_sure_finds_nothing_and_says_so(self):
         said = []
         find = eye.finder(Looker(sure=0.3), lambda: None, say=said.append)

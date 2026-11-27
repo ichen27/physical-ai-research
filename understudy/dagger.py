@@ -220,7 +220,7 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
                 drive: str = "student", facing: str = "student", seconds: float = pickup.EPISODE_SECONDS,
                 record: bool = False, blank: tuple[int, int] | None = None, ball_source=None,
                 ball: Sequence[float] | None = None, ball_present: bool = True,
-                after_reset: Callable[[], None] | None = None) -> tuple[dict, Episode | None]:
+                after_reset: Callable[[], None] | None = None, confirm: bool = False) -> tuple[dict, Episode | None]:
     """One attempt: a ball ahead of the arm, a new look; rise and look for it, face it, come down to the
     start pose, and run the policy with the speed limits.
 
@@ -232,7 +232,9 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
     false there is no ball on the desk at all. ``ball_source`` "student"
     feeds a teacher that drives the student's own idea of where the ball is instead of the
     truth: the student's eye with the teacher's hand. ``after_reset`` is called once the scene
-    has been put back, to stand something else on the desk. Returns what happened and, if asked, the record.
+    has been put back, to stand something else on the desk. With ``confirm`` a search refuses a ball
+    it does not see again after turning to face it, as the real-arm tool does with a trained eye.
+    Returns what happened and, if asked, the record.
     """
     ball = tuple(ball) if ball is not None else place_ball(rng)
     target = [rng.uniform(*pickup.HOLD_TARGET[axis]) for axis in "xyz"]
@@ -266,6 +268,8 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
         sim.move_slowly(calibration.to_ticks((turn, *LOOK_POSE[1:])) + gripper, move_seconds([raised_at], [turn]))
         raised_at = turn
         again = find_ball(scene, brain, target)
+        if again is None and confirm:
+            return {**outcome, "refused": "not seen again"}, None
         if again is not None:
             there = in_turned_frame((*again, pickup.BALL_RADIUS_M), -turn)
             guess = (there[0], there[1])

@@ -52,6 +52,7 @@ class Bench:
         ODD.save(folder / "calibration.json")
         self.on_picture = None
         self.stream = None  # a class to stand in for the live camera, if a test wants one
+        self.shots = 0
         self.highest = 0.0
         self.sim.after_step = self._after_step
         bench = self
@@ -61,6 +62,8 @@ class Bench:
                 self.keep_alive = keep_alive
 
             def picture(self):
+                bench.shots += 1
+                self.last_path = Path(f"shot-{bench.shots:03d}.jpg")
                 if self.keep_alive is not None:
                     self.keep_alive()  # as the real one does, many times, while it waits for the picture
                 if bench.on_picture is not None:
@@ -203,7 +206,7 @@ class ToolWithCameraTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "driver": None, "sweep_deg": 57.0, **extra},
+            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -381,7 +384,7 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "driver": None, "sweep_deg": 57.0, **extra},
+            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
         )
         return out
 
@@ -431,6 +434,96 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
             (self.bench.folder / "camera.json").unlink()
         self.assertIn("too far for its answers to be trusted", out, out)
         self.assertEqual(self.bench.robot.log, [])  # never configured, never moved
+
+    def with_camera_file(self, **colour):
+        """This bench's camera written as the arm's camera file, with the ball's colour as the hand-written finder is to take it."""
+        import dataclasses
+
+        path = self.bench.folder / "camera.json"
+        self.camera.save(path)
+        if colour:
+            path.write_text(json.dumps({**json.loads(path.read_text()), "colour": colour}))
+        return path
+
+    def test_asked_to_agree_the_two_finders_are_compared_on_every_look_and_recorded(self):
+        distance, bearing = 0.2, math.radians(20)
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        path = self.with_camera_file()
+        try:
+            out = self.run_pickup(ball, eye_must_agree=True)
+        finally:
+            path.unlink()
+        self.assertEqual(len(re.findall(r"the eye sees the ball \(\d\.\d\d sure\) and the hand-written finder agrees to \d+ mm", out)), 2, out)
+        self.assertGreater(self.bench.highest, pickup.LIFTED_HEIGHT_M)
+        looks = json.loads((self.bench.folder / "run.json").read_text())["looks"]
+        self.assertEqual(len(looks), 2)
+        for look in looks:  # the joints as read at each look, and what each finder said
+            self.assertEqual(len(look["joint_angles"]), 5)
+            self.assertLess(math.dist((look["eye"]["x"], look["eye"]["y"]), (look["other_finder"]["x"], look["other_finder"]["y"])), 0.025)
+            self.assertRegex(look["picture"], r"shot-\d+\.jpg")
+        self.assertAlmostEqual(looks[0]["joint_angles"][1], -0.9, delta=0.05)  # the look pose
+
+    def test_asked_to_agree_a_ball_only_the_eye_sees_is_refused_and_the_reason_is_said(self):
+        # The hand-written finder told that the ball is green sees nothing: the eye alone is not enough.
+        path = self.with_camera_file(hue_low=100.0, hue_high=140.0, saturation_min=0.3, value_min=0.2, veil_max=90.0)
+        try:
+            out = self.run_pickup((0.2, 0.03), eye_must_agree=True)
+        finally:
+            path.unlink()
+        self.assertIn("but the hand-written finder sees none in the same picture: not taken as the ball", out, out)
+        self.assertIn("stopped before the pickup: the camera did not see the ball anywhere it looked", out)
+        self.assertNotIn("finished. gripper", out)
+        self.assertLess(float(self.bench.sim.ball()[2]), pickup.BALL_RADIUS_M + 0.003)  # the ball was left alone
+        self.assertFalse(self.bench.robot.torque_on)
+
+    def test_comparing_the_finders_prints_and_records_every_place_and_decides_nothing(self):
+        distance, bearing = 0.17, math.radians(-15)  # near enough to be whole in the start-pose picture
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        path = self.with_camera_file()
+        try:
+            out = self.run_pickup(ball, compare_finders=True, find_only=True)
+        finally:
+            path.unlink()
+        line = r"place {} {}: (\d+\.\d) cm from the swivel axis, ([+-]\d+\.\d) degrees round, x=(-?\d\.\d+) y=(-?\d\.\d+)"
+        places = {}
+        for pose in ("look-pose look 1", "look-pose look 2", "start-pose"):
+            for who in ("eye", "finder"):
+                found = re.search(line.format(pose, who), out)
+                self.assertIsNotNone(found, f"{pose} {who}\n{out}")
+                places[pose, who] = (float(found.group(3)), float(found.group(4)))
+                self.assertAlmostEqual(float(found.group(1)), 17.0, delta=2.0)
+        self.assertRegex(out, r"place start-pose eye: .* sure=\d\.\d\d")
+        self.assertRegex(out, r"place start-pose finder: .* whole=yes")
+        # All six are in the arm's own frame, so they can be set beside one another and beside a touch.
+        for key, place in places.items():
+            self.assertLess(math.dist(place, ball), 0.025, key)
+        self.assertIn("no pickup was attempted because --find_only was given", out)
+        log = json.loads((self.bench.folder / "run.json").read_text())
+        self.assertEqual(len(log["looks"]), 2)
+        self.assertEqual(log["looks"][0]["picture"][:5], "shot-")
+        start = log["start_pose_look"]
+        self.assertTrue(start["ball_whole_in_the_picture"])
+        self.assertAlmostEqual(start["joint_angles"][1], pickup.START_POSE[1], delta=0.05)
+        self.assertAlmostEqual(start["joint_angles"][0], math.radians(-15) - math.asin(0.03 / 0.17), delta=0.08)  # facing the ball
+        self.assertLess(math.dist((start["eye"]["x"], start["eye"]["y"]), ball), 0.025)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
+        self.assertFalse(self.bench.robot.torque_on)
+
+    def test_comparing_does_not_veto_a_ball_the_hand_written_finder_cannot_see(self):
+        path = self.with_camera_file(hue_low=100.0, hue_high=140.0, saturation_min=0.3, value_min=0.2, veil_max=90.0)
+        try:
+            out = self.run_pickup((0.19, 0.03), compare_finders=True, find_only=True)
+        finally:
+            path.unlink()
+        self.assertIn("the hand-written finder sees none in the same picture\n", out, out)
+        self.assertIn("place look-pose look 1 finder: none", out)
+        self.assertIn("place start-pose finder: none whole=no", out)
+        self.assertRegex(out, r"ball seen (19|20|21)\.\d cm from the swivel axis")  # the eye alone still decided
+
+    def test_asking_them_to_agree_needs_a_trained_eye_and_the_camera_file(self):
+        out = self.run_pickup((0.2, 0.03), eye_must_agree=True)  # no camera file on this bench
+        self.assertIn("does not exist", out)
+        self.assertEqual(self.bench.robot.log, [])
 
     def test_the_eye_works_only_with_still_pictures(self):
         out = self.run_pickup((0.2, 0.03), camera="live")
@@ -514,7 +607,7 @@ class ToolWithStudentDrivingTests(unittest.TestCase):
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(log),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
             **{"camera": "live", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None,
-               "driver": str(DRIVER), "sweep_deg": 57.0, **extra},
+               "driver": str(DRIVER), "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
         )
         return out, json.loads(log.read_text()) if log.exists() else None
 

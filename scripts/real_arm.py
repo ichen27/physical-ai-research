@@ -47,6 +47,7 @@ from understudy import arm, pickup, runtime  # noqa: E402
 from understudy.kinematics import Chain  # noqa: E402
 from understudy.runner import (  # noqa: E402
     REACH_BAND_M,
+    SWIVEL_AXIS_X_M,
     CameraBall,
     PlacedBall,
     SwivelLimit,
@@ -571,8 +572,11 @@ def cmd_run(args) -> None:
             trained_eye = load_eye(args)
         elif args.driver:
             trained_driver = load_eye(args, driver=True)
-        else:
-            wrist, colour = load_camera(args)
+        for option, given in (("--eye_must_agree", args.eye_must_agree), ("--compare_finders", args.compare_finders)):
+            if given and not (args.eye or args.driver):
+                raise SystemExit(f"{option} sets a trained eye beside the hand-written finder: it needs --eye or --driver")
+        if args.eye_must_agree or args.compare_finders or not (args.eye or args.driver):
+            wrist, colour = load_camera(args)  # the hand-written finder needs the camera's calibration; a trained eye alone does not
         if args.camera == "live":
             # Before the arm is powered, so that a camera macOS will not open costs nothing.
             try:
@@ -651,9 +655,74 @@ def cmd_run(args) -> None:
                     if trained_eye is not None or trained_driver is not None:
                         from understudy.eye import finder
 
+                        from understudy.runner import pick_ball
+
+                        second = None
+                        if args.eye_must_agree or args.compare_finders:
+                            def second(picture, joint_angles, near):
+                                """Where the hand-written finder puts the ball in the same picture."""
+                                blobs = [blob.scaled(wrist.width / picture.shape[1]) for blob in vision.find_blobs(picture, colour)]
+                                return pick_ball(wrist, blobs, joint_angles, chain, near)
+
+                        take_picture = picture_now if trained_driver is not None else eye.picture
+                        the_eye = trained_driver or trained_eye
+                        looks = record_of_run.setdefault("looks", [])
                         # A trained eye has to be sure twice: from where it first sees the ball and again facing it.
-                        find = finder(trained_driver, picture_now) if trained_driver is not None else finder(trained_eye, eye.picture)
+                        find_in_frame = finder(the_eye, take_picture, second=second, looks=looks, must_agree=args.eye_must_agree)
+
+                        def shot_name() -> str | None:
+                            """The file the watcher saved the last still picture in. The live stream keeps none."""
+                            last = None if trained_driver is not None else getattr(eye, "last_path", None)
+                            return last.name if last is not None else None
+
+                        def where(point) -> dict:
+                            """A place in the arm's own frame, as distance from the swivel axis and degrees round."""
+                            return {"x": round(point[0], 4), "y": round(point[1], 4),
+                                    "cm": round(100 * math.hypot(point[0] - SWIVEL_AXIS_X_M, point[1]), 2),
+                                    "deg": round(math.degrees(math.atan2(point[1], point[0] - SWIVEL_AXIS_X_M)), 1)}
+
+                        def told(pose_name: str, who: str, place: dict | None, more: str = "") -> None:
+                            if place is None:
+                                print(f"place {pose_name} {who}: none{more}", flush=True)
+                            else:
+                                print(f"place {pose_name} {who}: {place['cm']:.1f} cm from the swivel axis, {place['deg']:+.1f} degrees round, "
+                                      f"x={place['x']:.3f} y={place['y']:.3f}{more}", flush=True)
+
+                        def find(joint_angles, near=None):
+                            point = find_in_frame(joint_angles, near)
+                            # The finder works in the frame its joint angles are in; what is recorded is in the arm's own.
+                            look = looks[-1]
+                            own = calibration.to_rad(robot.read().positions[:5])
+                            frame_turn = own[0] - joint_angles[0]
+                            look["joint_angles"] = [round(a, 4) for a in own]
+                            look["picture"] = shot_name()
+                            for who in ("eye", "other_finder"):
+                                if look.get(who) is not None:
+                                    look[who] = where(in_turned_frame((*look[who], 0.0), -frame_turn))
+                            if args.compare_finders:
+                                number = len(looks)
+                                told(f"look-pose look {number}", "eye", look["eye"], f" sure={look['sure']:.2f}")
+                                told(f"look-pose look {number}", "finder", look.get("other_finder"))
+                            return point
+
                         facing = seek.face_ball(robot, calibration, None, None, find=find, sweep=sweep, confirm=True)
+                        if facing is not None and args.compare_finders:
+                            # One more still picture from the start pose, facing the ball: near where the camera was calibrated.
+                            picture = take_picture()
+                            own = calibration.to_rad(robot.read().positions[:5])
+                            point, how_sure = the_eye.glance(picture, (0.0, *own[1:5]))
+                            eye_place = where(in_turned_frame((point[0], point[1], 0.0), -own[0]))
+                            blobs = [blob.scaled(wrist.width / picture.shape[1]) for blob in vision.find_blobs(picture, colour)]
+                            big = [blob for blob in blobs if blob.radius_px > 0.03 * wrist.width]
+                            whole = bool(big) and max(big, key=lambda blob: blob.area_px).whole()
+                            other = pick_ball(wrist, blobs, own, chain, (eye_place["x"], eye_place["y"], pickup.BALL_RADIUS_M))
+                            finder_place = None if other is None else where(other)
+                            told("start-pose", "eye", eye_place, f" sure={how_sure:.2f}")
+                            told("start-pose", "finder", finder_place, f" whole={'yes' if whole else 'no'}")
+                            record_of_run["start_pose_look"] = {
+                                "joint_angles": [round(a, 4) for a in own], "sure": round(how_sure, 3), "eye": eye_place,
+                                "other_finder": finder_place, "ball_whole_in_the_picture": whole,
+                                "picture": shot_name()}
                     else:
                         facing = seek.face_ball(robot, calibration, wrist, look_now, sweep=sweep)
                 except (ValueError, CameraError) as error:
@@ -825,6 +894,15 @@ def main() -> None:
                      "its .json beside it) that moves the arm itself from the camera's pictures, thirty times a second, in place "
                      "of the policy that is told where the ball is. The same speed and lead limits apply. It finds the ball "
                      "first, as --eye does, and stops if it loses sight of it.")
+    run.add_argument("--eye_must_agree", action="store_true",
+                     help="With --eye or --driver: also run the hand-written finder on each look's picture, and take a ball only "
+                     "if the two put it within 2.5 cm of each other. Needs the camera's calibration file. A guard against something "
+                     "that only looks like the ball; it does not catch an error the two share, such as the arm's own calibration.")
+    run.add_argument("--compare_finders", action="store_true",
+                     help="With --eye or --driver: at every look also run the hand-written finder on the same picture, and once the "
+                     "arm is facing the ball at the start pose take one more picture and ask both again. Each answer is printed "
+                     "on its own line beginning 'place', in the arm's own frame, and recorded with the joints as read. Nothing is "
+                     "decided by it. For checking the camera and the arm against a touch; use it with --find_only.")
     run.add_argument("--sweep_deg", type=float, default=57.0,
                      help="With --camera: how far round to either side the raised arm swivels to look for the ball. The looks are "
                      "at 0, 29 and 57 degrees; 29 leaves the two widest out, 0 looks straight ahead only.")

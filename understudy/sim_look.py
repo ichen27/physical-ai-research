@@ -402,6 +402,8 @@ class Scene:
         if look.noise > 0.05:
             image += self._noise.normal(0.0, look.noise, image.shape).astype(np.float32)
         image = np.clip(image, 0, 255).astype(np.uint8)
+        # The picture before it is shrunk for the student (blue-green-red), for anything that wants more of it.
+        self.last_render = np.ascontiguousarray(image[:, :, ::-1])
         small = cv2.resize(image, (PICTURE_WIDTH, PICTURE_HEIGHT), interpolation=cv2.INTER_AREA)
 
         seen = float((geoms == self._ball_geom).sum())
