@@ -55,6 +55,9 @@ NEAREST_EDGE_M = 0.10
 # reaches a little beyond the ball, and its fingers and the ball are within 7 cm of the arm's line.
 PICKUP_SWING_LEFT_RAD = math.radians(12.0)
 PICKUP_SWING_RIGHT_RAD = math.radians(45.0)
+# On the real arm more is allowed for. Its first pickup recorded with these limits swung 41 degrees to the right,
+# where the same ball in simulation gave 34: one run, so the simulated worst case is not yet a safe bound for it.
+REAL_ARM_SWING_RIGHT_RAD = math.radians(55.0)
 PICKUP_HALF_WIDTH_M = 0.07
 PICKUP_BEYOND_M = 0.08
 # A container's place is read off the arm by hand and may be a little out. This much more room is asked for. With
@@ -107,7 +110,8 @@ class Carried:
     released_at: tuple[float, float] | None = None  # where the gripper let go, x and y in the arm's frame
 
 
-def in_the_way(place: SetDown, ball_xy: Sequence[float], facing_rad: float | None = None) -> str | None:
+def in_the_way(place: SetDown, ball_xy: Sequence[float], facing_rad: float | None = None,
+               swing_right_rad: float = PICKUP_SWING_RIGHT_RAD) -> str | None:
     """Why a ball at ``ball_xy`` should not be picked up with the container where it is, or None if it may be.
 
     A container is a real thing the gripper could strike. Picking a ball up, the arm
@@ -115,7 +119,8 @@ def in_the_way(place: SetDown, ball_xy: Sequence[float], facing_rad: float | Non
     must be clear of all of that. And a ball lying in the container is not on the desk.
     ``ball_xy`` is in the arm's own frame, not a turned one. ``facing_rad`` is how far
     round the arm faces for the pickup; left out, it is taken to turn to face the ball
-    (``understudy.runner.turn_to_face``).
+    (``understudy.runner.turn_to_face``). ``swing_right_rad`` is how far to the right of that the lift is
+    allowed to swing.
     """
     if place.opening_m <= 0:
         return None
@@ -131,7 +136,7 @@ def in_the_way(place: SetDown, ball_xy: Sequence[float], facing_rad: float | Non
     aside = math.inf
     steps = 60
     for step in range(steps + 1):
-        line = facing - PICKUP_SWING_RIGHT_RAD + (PICKUP_SWING_RIGHT_RAD + PICKUP_SWING_LEFT_RAD) * step / steps
+        line = facing - swing_right_rad + (swing_right_rad + PICKUP_SWING_LEFT_RAD) * step / steps
         along = min(max(out * math.cos(round_ - line), 0.0), reach + PICKUP_BEYOND_M)
         aside = min(aside, math.sqrt(max(out * out - 2.0 * out * along * math.cos(round_ - line) + along * along, 0.0)))
     needed = PICKUP_HALF_WIDTH_M + PLACE_SLACK_M

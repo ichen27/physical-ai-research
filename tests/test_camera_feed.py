@@ -5,6 +5,7 @@ import textwrap
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -160,6 +161,19 @@ class LiveCameraTests(unittest.TestCase):
             self.assertIsNone(live.look(vision.BallColour()))
         finally:
             live.close()
+
+    def test_the_camera_is_asked_for_its_full_size_unless_a_smaller_one_of_the_same_shape_is_named(self):
+        with mock.patch("understudy.camera_feed.find_camera", lambda ffmpeg: "the arm's camera"):
+            for capture, wanted in ((None, "1280x720"), ((640, 360), "640x360")):
+                with mock.patch("understudy.camera_feed.subprocess.Popen") as started:
+                    started.return_value.stdout.read.return_value = b""
+                    LiveCamera(capture=capture)
+                command = started.call_args[0][0]
+                self.assertEqual(command[command.index("-video_size") + 1], wanted)
+                self.assertIn("scale=640:360", command[command.index("-vf") + 1])  # what the tool is given does not change
+            with self.assertRaises(CameraError) as refused:
+                LiveCamera(capture=(640, 480))  # four by three: the camera would show a different view
+            self.assertIn("different view", str(refused.exception))
 
     def test_a_camera_that_will_not_open_is_explained(self):
         live = self.stream("""

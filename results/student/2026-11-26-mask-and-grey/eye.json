@@ -1,0 +1,44 @@
+{
+  "input": "mask+grey",
+  "picture": [
+    128,
+    72
+  ],
+  "exported_from": "student.pt",
+  "student_training": {
+    "round": 7,
+    "steps_held": 336400,
+    "seed": 1,
+    "nominal_camera": {
+      "width": 1280,
+      "height": 720,
+      "focal_px": 975.4352602957422,
+      "centre_px": [
+        640.0,
+        360.0
+      ],
+      "distortion": 0.0,
+      "mount_xyz": [
+        -0.04543882271468518,
+        -0.0013244590303848548,
+        0.028533630822523328
+      ],
+      "mount_rotation": [
+        2.544762693604412,
+        -2.5571505104179613,
+        1.3656118074639212
+      ]
+    },
+    "nominal_camera_from": "a camera file, camera.local.json (the real arm's calibration of 2026-11-26; not in this repository)",
+    "speed_limit_rad_s": 0.3,
+    "lead_limit_rad": 0.05,
+    "look_pose": [
+      0.0,
+      -0.9,
+      0.1,
+      1.6,
+      0.0
+    ]
+  },
+  "output": "x, y, z of the ball in metres, then how sure the eye is that the ball is in the picture, before the sigmoid"
+}

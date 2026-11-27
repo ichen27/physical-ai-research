@@ -58,39 +58,57 @@ def _ticks(calibration: arm.Calibration, pose: Sequence[float], swivel: float) -
     return calibration.to_ticks((swivel, *pose[1:])) + [calibration.finger_to_ticks(pickup.GRIPPER_OPEN_RAD)]
 
 
-def look_for_ball(io: MovingArm, calibration: arm.Calibration, camera: WristCamera, look: Callable[[], Sequence | None],
-                  chain: Chain | None = None, say: Callable[[str], None] = print) -> tuple[float, float] | None:
+def _finder(camera: WristCamera | None, look: Callable[[], Sequence | None] | None, chain: Chain, find):
+    """How the ball is found in a picture taken now: ``find`` if given, or the hand-written finder on ``look``'s patches."""
+    if find is not None:
+        return find
+    if camera is None or look is None:
+        raise ValueError("give a camera and a way to look, or a finder")
+    return lambda joint_angles, near=None: pick_ball(camera, look() or [], joint_angles, chain, near)
+
+
+def look_for_ball(io: MovingArm, calibration: arm.Calibration, camera: WristCamera | None, look: Callable[[], Sequence | None] | None,
+                  chain: Chain | None = None, say: Callable[[str], None] = print, find=None,
+                  sweep: Sequence[float] = SCAN) -> tuple[float, float] | None:
     """Where the ball is, in ``calibration``'s frame, or None if it is nowhere the camera can look.
 
     The arm must be holding the start pose. It rises to the look pose and is left there,
     swivelled to wherever the ball was seen from (or to the last place looked from).
-    ``look`` returns the patches of the ball's colour in a picture taken now.
+    ``look`` returns the patches of the ball's colour in a picture taken now. ``find``, if
+    given, replaces the camera and the patches: it is called with the arm's joint angles
+    (and, sometimes, a place the ball is expected near) and returns the ball's place in the
+    frame those angles are in, from a picture it takes itself, or None
+    (``understudy.eye.finder`` makes one from a trained eye). ``sweep`` is the swivel angles looked from, in order.
     """
     chain = chain or Chain()
+    find = _finder(camera, look, chain, find)
     here = tuple(pickup.START_POSE)
-    for angle in SCAN:
+    for angle in sweep:
         there = (angle, *LOOK_POSE[1:])
         io.move_slowly(_ticks(calibration, LOOK_POSE, angle), move_seconds(here, there))
         here = there
-        blobs = look()
-        point = pick_ball(camera, blobs or [], calibration.to_rad(io.read().positions[:5]), chain)
+        point = find(calibration.to_rad(io.read().positions[:5]))
         if point is not None:
             return (point[0], point[1])
         say(f"  no ball seen looking {math.degrees(angle):+.0f} degrees round")
     return None
 
 
-def face_ball(io: MovingArm, calibration: arm.Calibration, camera: WristCamera, look: Callable[[], Sequence | None],
-              chain: Chain | None = None, say: Callable[[str], None] = print) -> Facing | None:
+def face_ball(io: MovingArm, calibration: arm.Calibration, camera: WristCamera | None, look: Callable[[], Sequence | None] | None,
+              chain: Chain | None = None, say: Callable[[str], None] = print, find=None,
+              sweep: Sequence[float] = SCAN, confirm: bool = False) -> Facing | None:
     """Find the ball, turn to face it, look again, and come down to the start pose. None if no ball is found.
 
     The arm must be holding the start pose of ``calibration``. If the ball is found it
     ends holding the start pose of the returned, turned calibration; if not, it is left
     in the look pose. Raises ValueError, with the arm in the look pose, if the ball is
-    too far round to face.
+    too far round to face. ``find`` and ``sweep`` are as for ``look_for_ball``. With ``confirm``
+    the ball must be seen again after the arm has turned to face it: if it is not, ValueError
+    is raised with the arm in the look pose, where otherwise the first sighting is used.
     """
     chain = chain or Chain()
-    first = look_for_ball(io, calibration, camera, look, chain, say)
+    find = _finder(camera, look, chain, find)
+    first = look_for_ball(io, calibration, None, None, chain, say, find, sweep)
     if first is None:
         return None
     turn = turn_to_face(first)
@@ -98,8 +116,10 @@ def face_ball(io: MovingArm, calibration: arm.Calibration, camera: WristCamera, 
     # Face it, still raised, and look again: the ball is now near the middle of the picture.
     io.move_slowly(_ticks(calibration, LOOK_POSE, turn), move_seconds([seen_from], [turn]))
     guess = in_turned_frame((*first, pickup.BALL_RADIUS_M), turn)
-    again = pick_ball(camera, look() or [], turned(calibration, turn).to_rad(io.read().positions[:5]), chain, guess)
+    again = find(turned(calibration, turn).to_rad(io.read().positions[:5]), guess)
     raised_at = turn
+    if again is None and confirm:
+        raise ValueError("the ball was seen once and not again after the arm turned to face it")
     if again is None:
         say("  the ball was not seen again after turning to face it; using where it was first seen")
     else:

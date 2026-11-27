@@ -112,6 +112,9 @@ def main() -> None:
     parser.add_argument("--max_speed", type=float, default=0.3, help="The pickup's speed limit, rad/s.")
     parser.add_argument("--max_lead", type=float, default=0.05, help="The pickup's lead limit, rad.")
     parser.add_argument("--seconds", type=float, default=15.0, help="Length of the pickup.")
+    parser.add_argument("--wrist_stop_deg", type=float,
+                        help="Stop the wrist bending back further than this many degrees (a negative number). On the first real "
+                        "arm, with the camera mounted, it stopped at -10; the arm's model lets it go to -97, and the policy uses that.")
     parser.add_argument("--video", help="Film the first attempt in which the ball is lifted, to this .mp4 file (needs OpenGL).")
     parser.add_argument("--output", help="Write the results to this JSON file.")
     args = parser.parse_args()
@@ -129,6 +132,10 @@ def main() -> None:
         ball_geom = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_GEOM, "ball")
         sim.model.geom_condim[ball_geom] = 6  # MuJoCo only resists rolling in contacts of this kind
         sim.model.geom_friction[ball_geom][2] = args.rolling_resistance * pickup.BALL_RADIUS_M
+    if args.wrist_stop_deg is not None:
+        wrist = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_JOINT, arm.ARM_JOINT_NAMES[3])
+        sim.model.jnt_limited[wrist] = 1
+        sim.model.jnt_range[wrist][0] = math.radians(args.wrist_stop_deg)
     ball_speed = int(sim.model.body_dofadr[sim._ball_body])
     gripper = sim._ctrl[5]
     rng = random.Random(args.seed)
@@ -171,6 +178,7 @@ def main() -> None:
             if track["phase"] == "pickup":
                 track["arm_in_pickup"] |= arm_touches
                 angles = arm_sim.joint_angles()[:5]
+                track["wrist_low"] = min(track.get("wrist_low", 9.0), angles[3])
                 tip, held = chain.tip_position(angles), grasp_point(angles, chain)
                 if min(tip[2], held[2] - pickup.BALL_RADIUS_M) < LOW_M:
                     track["swing_right"] = max(track["swing_right"], turn - angles[0])
@@ -212,6 +220,8 @@ def main() -> None:
         row["lifted"] = bool(sim.ball()[2] > pickup.LIFTED_HEIGHT_M)
         row["arm_touched_bowl_in_pickup"] = track["arm_in_pickup"]
         row["swung_right_deg"], row["swung_left_deg"] = round(math.degrees(track["swing_right"]), 1), round(math.degrees(track["swing_left"]), 1)
+        row["wrist_furthest_back_deg"] = round(math.degrees(track.get("wrist_low", 0.0)), 1)
+        row["tip_at_the_end_of_the_pickup"] = [round(float(v), 3) for v in chain.tip_position(sim.joint_angles()[:5])]
         row["reached_beyond_ball_cm"] = round(100 * (track["out"] - math.hypot(ball[0] - SWIVEL_AXIS_X_M, ball[1])), 1)
         if bowl is not None:
             row["bowl_pushed_in_pickup_mm"] = round(1000 * math.dist(sim_bowl.bowl_xy(sim), spot), 1)
@@ -307,6 +317,7 @@ def main() -> None:
             "ball_rebounds_this_share_of_a_5_cm_drop": round(sim_bowl.rebound(bowl), 2),
             "really_stands_cm_from_where_told": args.place_error_cm, "rim_really_higher_than_told_cm": args.rim_error_cm},
         "ball_bottom_above_the_rim_when_let_go_cm": args.release_above_cm,
+        "wrist_stops_bending_back_at_deg": args.wrist_stop_deg,
         "carry_speed_rad_s": args.carry_speed,
         "fastest_joint_seen_rad_s": max((row.get("fastest_joint_rad_s") or 0.0 for row in lifted), default=None),
         "ball_rolling_resistance": args.rolling_resistance,

@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -109,16 +109,27 @@ class LiveCamera:
     ``command`` produces raw blue-green-red pictures of ``width`` by ``height``
     on its standard output; by default it is ``ffmpeg`` reading the arm's
     camera by name. ``full_width`` is the camera's own picture width, which
-    positions are reported in whatever size the stream is.
+    positions are reported in whatever size the stream is. ``capture`` is the
+    size the camera itself is asked for (by default its full size): at its full
+    size, uncompressed, the first arm's camera gives only ten pictures a second.
+    A smaller size must have the same shape, or the view is a different one.
     """
 
+    # Options that ask ffmpeg not to hold pictures back. Not yet the default: their effect on this camera is unmeasured.
+    LOW_DELAY = ("-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0")
+
     def __init__(self, width: int = 640, height: int = 360, full_width: int = 1280, ffmpeg: str = "ffmpeg",
-                 command: list[str] | None = None):
+                 command: list[str] | None = None, input_options: Sequence[str] = (),
+                 capture: tuple[int, int] | None = None):
         if command is None:
             name = find_camera(ffmpeg)
+            capture = capture or (full_width, full_width * height // width)
+            if capture[0] * height != capture[1] * width:
+                raise CameraError(f"a capture size of {capture[0]} x {capture[1]} is not the shape of the {width} x {height} "
+                                  "pictures asked for: the camera would show a different view")
             command = [
-                ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-pixel_format", "uyvy422",
-                "-framerate", "30", "-video_size", f"{full_width}x{full_width * height // width}", "-i", f"{name}:none",
+                ffmpeg, "-hide_banner", "-loglevel", "error", *input_options, "-f", "avfoundation", "-pixel_format", "uyvy422",
+                "-framerate", "30", "-video_size", f"{capture[0]}x{capture[1]}", "-i", f"{name}:none",
                 "-vf", f"scale={width}:{height}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-",
             ]
         self.width, self.height = width, height
@@ -127,6 +138,7 @@ class LiveCamera:
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
         self._number = 0
+        self._arrived = 0.0
         self._taken = 0
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
@@ -143,7 +155,7 @@ class LiveCamera:
                 data += chunk
             frame = np.frombuffer(bytes(data), dtype=np.uint8).reshape(self.height, self.width, 3)
             with self._lock:
-                self._frame, self._number = frame, self._number + 1
+                self._frame, self._number, self._arrived = frame, self._number + 1, time.monotonic()
 
     def wait_for_first(self, timeout_s: float = 10.0) -> None:
         """Wait until pictures are arriving. Raises with the camera program's own complaint if they never do."""
@@ -172,6 +184,11 @@ class LiveCamera:
                 return None
             self._taken = self._number
             return self._frame
+
+    def arrival(self) -> tuple[int, float]:
+        """The newest picture's number, counting from one, and when it arrived (``time.monotonic``). (0, 0.0) before the first."""
+        with self._lock:
+            return self._number, self._arrived
 
     def newest(self) -> np.ndarray:
         """The newest picture whether or not it was already taken. Raises if none has arrived."""

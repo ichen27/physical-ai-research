@@ -22,9 +22,11 @@ and then:
 
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --find_only   # find it and say where; no pickup
     python scripts/real_arm.py run --policy <policy.onnx> --camera look   # one look, then pick it up
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look --eye <eye.onnx>   # the same, a trained eye finding the ball
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --bowl 0.0 0.24 0.0 0.165 0.065   # ... and drop it in a bowl
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --set_down 80 22   # ... or put it down on the desk
     python scripts/real_arm.py run --policy <policy.onnx> --camera live   # follow the ball; start from Terminal
+    python scripts/real_arm.py run --policy <policy.onnx> --camera live --driver <driver.onnx>   # a trained student drives from the pictures
 
 Needs: pip install dynamixel_sdk onnxruntime numpy opencv-python-headless
 """
@@ -45,6 +47,7 @@ from understudy import arm, pickup, runtime  # noqa: E402
 from understudy.kinematics import Chain  # noqa: E402
 from understudy.runner import (  # noqa: E402
     REACH_BAND_M,
+    SWIVEL_AXIS_X_M,
     CameraBall,
     PlacedBall,
     SwivelLimit,
@@ -309,6 +312,37 @@ def load_camera(args):
     return WristCamera.load(path), vision.colour_from(json.loads(path.read_text()).get("colour"))
 
 
+def load_eye(args, driver: bool = False):
+    """The trained eye named by --eye, or the whole student named by --driver, checked against this arm's camera file if there is one."""
+    from understudy.eye import Driver, Eye
+
+    option, file = ("--driver", args.driver) if driver else ("--eye", args.eye)
+    try:
+        eye = Driver(file) if driver else Eye(file)
+    except (OSError, ValueError, KeyError) as error:
+        raise SystemExit(f"{option}: {error}") from None
+    trained = eye.notes.get("student_training", {}).get("nominal_camera")
+    path = Path(args.camera_file)
+    if trained is None or not path.exists():
+        print(f"The eye {Path(file).name} cannot be checked against this arm's camera: "
+              + ("it does not say what camera it was trained for." if trained is None else f"{path} does not exist."))
+        return eye
+    from understudy.camera_model import WristCamera, rotation_from_vector
+
+    here = WristCamera.load(path)
+    focal = abs(here.focal_px / here.width * trained["width"] / trained["focal_px"] - 1.0)
+    shift = math.dist(here.mount_xyz, trained["mount_xyz"])
+    between = rotation_from_vector(here.mount_rotation).T @ rotation_from_vector(trained["mount_rotation"])
+    turn = math.degrees(math.acos(max(-1.0, min(1.0, (float(between[0][0] + between[1][1] + between[2][2]) - 1.0) / 2.0))))
+    said = (f"The eye {Path(file).name} was trained for a camera whose lens differs from this arm's by {focal * 100:.1f}% "
+            f"and whose mount differs by {shift * 1000:.1f} mm and {turn:.1f} degrees.")
+    # It was trained with the camera up to 4%, 3 mm and 1.5 degrees from where it was taken to be.
+    if focal > 0.10 or shift > 0.010 or turn > 4.0:
+        raise SystemExit(f"{option}: {said} That is too far for its answers to be trusted; train or export one for this camera.")
+    print(said + ("" if focal <= 0.04 and shift <= 0.003 and turn <= 1.5 else " That is more than it was trained to allow for: expect it to be less exact."))
+    return eye
+
+
 def watcher(args, robot=None, prefix="look"):
     from understudy.camera_feed import WatcherCamera
 
@@ -518,27 +552,44 @@ def cmd_run(args) -> None:
         if args.dry_run:
             raise SystemExit(f"a dry run does not pick anything up, so there is nothing to carry; leave out {option}")
         if args.ball:
-            blocked = carry.in_the_way(place, args.ball, facing_rad=0.0)  # with --ball the arm faces straight ahead
+            # With --ball the arm faces straight ahead.
+            blocked = carry.in_the_way(place, args.ball, facing_rad=0.0, swing_right_rad=carry.REAL_ARM_SWING_RIGHT_RAD)
             if blocked:
                 raise SystemExit(f"{option}: {blocked}. Move the bowl or the ball; nothing was powered.")
     calibration = arm.Calibration.load(args.calibration)
     policy = runtime.OnnxPolicy(args.policy)
     print(BASE_NOTE)
-    wrist = colour = live = None
+    wrist = colour = live = trained_eye = trained_driver = None
+    if args.eye and args.camera != "look":
+        raise SystemExit("--eye finds the ball in still pictures: use it with --camera look")
+    if args.driver and args.camera != "live":
+        raise SystemExit("--driver drives the arm from the camera's stream of pictures: use it with --camera live")
     if args.camera:
         from understudy import seek, vision
         from understudy.camera_feed import CameraError, LiveCamera
 
-        wrist, colour = load_camera(args)
+        if args.eye:
+            trained_eye = load_eye(args)
+        elif args.driver:
+            trained_driver = load_eye(args, driver=True)
+        for option, given in (("--eye_must_agree", args.eye_must_agree), ("--compare_finders", args.compare_finders)):
+            if given and not (args.eye or args.driver):
+                raise SystemExit(f"{option} sets a trained eye beside the hand-written finder: it needs --eye or --driver")
+        if args.eye_must_agree or args.compare_finders or not (args.eye or args.driver):
+            wrist, colour = load_camera(args)  # the hand-written finder needs the camera's calibration; a trained eye alone does not
         if args.camera == "live":
             # Before the arm is powered, so that a camera macOS will not open costs nothing.
             try:
-                live = LiveCamera(ffmpeg=args.ffmpeg, full_width=wrist.width)
+                live = LiveCamera(ffmpeg=args.ffmpeg, full_width=wrist.width if wrist is not None else 1280,
+                                  capture=tuple(args.stream_capture) if args.stream_capture else None)
                 live.wait_for_first()
             except CameraError as error:
                 raise SystemExit(str(error)) from None
         print("The camera on the wrist will look for the ball"
-              + (" and follow it." if live else " once; after that the ball is assumed to stay where it was seen."))
+              + (" and follow it." if live else " once; after that the ball is assumed to stay where it was seen.")
+              + (" A trained eye, not the hand-written finder, says where the ball is; the arm does not move towards a ball it is not sure of." if trained_eye else "")
+              + (" A trained student, shown the pictures, moves the arm itself; --policy is used only for how its commands are scaled. "
+                 "It stops, and the arm is lowered, if it loses sight of the ball or the pictures stop coming." if trained_driver else ""))
     else:
         print(f"Ball taken to be at x={args.ball[0]} y={args.ball[1]}.")
         print("No camera: the ball is assumed to stay where it was put until the gripper holds it.")
@@ -566,7 +617,7 @@ def cmd_run(args) -> None:
         log_path = Path(args.log or REPO / time.strftime("run-%Y%m%d-%H%M%S.local.json"))
         chain, log = Chain(), []
         record_of_run = {"ball": None, "turn_rad": 0.0, "ball_source": args.camera or "placed"}
-        ball = None
+        ball = stream = None
 
         def record(step) -> None:
             log.append({
@@ -577,6 +628,7 @@ def cmd_run(args) -> None:
                 "ball": [round(v, 4) for v in step.ball_position],
                 "action": [round(a, 3) for a in step.action],
                 **({"ball_state": ball.state} if isinstance(ball, CameraBall) else {}),
+                **(stream.thoughts[-1] if stream is not None and stream.thoughts else {}),
             })
 
         robot.configure()
@@ -586,17 +638,97 @@ def cmd_run(args) -> None:
             frame, io = calibration, robot
             if args.camera:
                 if live:
-                    def look_now():
+                    def picture_now():
                         hold_still(robot, 0.4)  # let the picture catch up with the arm, which has just stopped
-                        return [blob.scaled(wrist.width / live.width) for blob in vision.find_blobs(live.newest(), colour)]
+                        return live.newest()
+
+                    def look_now():
+                        return [blob.scaled(wrist.width / live.width) for blob in vision.find_blobs(picture_now(), colour)]
                 else:
                     eye = watcher(args, robot, "run")
 
                     def look_now():
                         return vision.find_blobs(eye.picture(), colour)
 
+                # Looks further round than --sweep_deg are left out; straight ahead is always looked from.
+                sweep = [angle for angle in seek.SCAN if abs(math.degrees(angle)) <= args.sweep_deg + 0.5]
                 try:
-                    facing = seek.face_ball(robot, calibration, wrist, look_now)
+                    if trained_eye is not None or trained_driver is not None:
+                        from understudy.eye import finder
+
+                        from understudy.runner import pick_ball
+
+                        second = None
+                        if args.eye_must_agree or args.compare_finders:
+                            def second(picture, joint_angles, near):
+                                """Where the hand-written finder puts the ball in the same picture."""
+                                blobs = [blob.scaled(wrist.width / picture.shape[1]) for blob in vision.find_blobs(picture, colour)]
+                                return pick_ball(wrist, blobs, joint_angles, chain, near)
+
+                        take_picture = picture_now if trained_driver is not None else eye.picture
+                        the_eye = trained_driver or trained_eye
+                        looks = record_of_run.setdefault("looks", [])
+                        # A trained eye has to be sure twice: from where it first sees the ball and again facing it.
+                        find_in_frame = finder(the_eye, take_picture, second=second, looks=looks, must_agree=args.eye_must_agree)
+
+                        def shot_name() -> str | None:
+                            """The file the watcher saved the last still picture in. The live stream keeps none."""
+                            last = None if trained_driver is not None else getattr(eye, "last_path", None)
+                            return last.name if last is not None else None
+
+                        def where(point) -> dict:
+                            """A place in the arm's own frame, as distance from the swivel axis and degrees round."""
+                            return {"x": round(point[0], 4), "y": round(point[1], 4),
+                                    "cm": round(100 * math.hypot(point[0] - SWIVEL_AXIS_X_M, point[1]), 2),
+                                    "deg": round(math.degrees(math.atan2(point[1], point[0] - SWIVEL_AXIS_X_M)), 1)}
+
+                        def told(pose_name: str, who: str, place: dict | None, more: str = "") -> None:
+                            if place is None:
+                                print(f"place {pose_name} {who}: none{more}", flush=True)
+                            else:
+                                print(f"place {pose_name} {who}: {place['cm']:.1f} cm from the swivel axis, {place['deg']:+.1f} degrees round, "
+                                      f"x={place['x']:.3f} y={place['y']:.3f}{more}", flush=True)
+
+                        def find(joint_angles, near=None):
+                            point = find_in_frame(joint_angles, near)
+                            # The finder works in the frame its joint angles are in; what is recorded is in the arm's own.
+                            look = looks[-1]
+                            own = calibration.to_rad(robot.read().positions[:5])
+                            frame_turn = own[0] - joint_angles[0]
+                            look["joint_angles"] = [round(a, 4) for a in own]
+                            look["picture"] = shot_name()
+                            for who in ("eye", "other_finder"):
+                                if look.get(who) is not None:
+                                    look[who] = where(in_turned_frame((*look[who], 0.0), -frame_turn))
+                            if args.compare_finders:
+                                number = len(looks)
+                                told(f"look-pose look {number}", "eye", look["eye"], f" sure={look['sure']:.2f}")
+                                if "other_finder" in look:
+                                    told(f"look-pose look {number}", "finder", look["other_finder"])
+                                else:  # the eye was not sure, so the other finder was never asked
+                                    print(f"place look-pose look {number} finder: not asked", flush=True)
+                            return point
+
+                        facing = seek.face_ball(robot, calibration, None, None, find=find, sweep=sweep, confirm=True)
+                        if facing is not None and args.compare_finders:
+                            # One more still picture from the start pose, facing the ball: near where the camera was calibrated.
+                            picture = take_picture()
+                            own = calibration.to_rad(robot.read().positions[:5])
+                            point, how_sure = the_eye.glance(picture, (0.0, *own[1:5]))
+                            eye_place = where(in_turned_frame((point[0], point[1], 0.0), -own[0]))
+                            blobs = [blob.scaled(wrist.width / picture.shape[1]) for blob in vision.find_blobs(picture, colour)]
+                            big = [blob for blob in blobs if blob.radius_px > 0.03 * wrist.width]
+                            whole = bool(big) and max(big, key=lambda blob: blob.area_px).whole()
+                            other = pick_ball(wrist, blobs, own, chain, (eye_place["x"], eye_place["y"], pickup.BALL_RADIUS_M))
+                            finder_place = None if other is None else where(other)
+                            told("start-pose", "eye", eye_place, f" sure={how_sure:.2f}")
+                            told("start-pose", "finder", finder_place, f" whole={'yes' if whole else 'no'}")
+                            record_of_run["start_pose_look"] = {
+                                "joint_angles": [round(a, 4) for a in own], "sure": round(how_sure, 3), "eye": eye_place,
+                                "other_finder": finder_place, "ball_whole_in_the_picture": whole,
+                                "picture": shot_name()}
+                    else:
+                        facing = seek.face_ball(robot, calibration, wrist, look_now, sweep=sweep)
                 except (ValueError, CameraError) as error:
                     raise SystemExit(f"stopped before the pickup: {error}") from None
                 if facing is None:
@@ -614,20 +746,31 @@ def cmd_run(args) -> None:
                     raise SystemExit("found the ball; no pickup was attempted because --find_only was given.")
                 if place is not None:
                     seen_at = in_turned_frame((*facing.ball, 0.0), -facing.turn_rad)[:2]  # back in the arm's own frame
-                    blocked = carry.in_the_way(place, seen_at, facing.turn_rad)
+                    blocked = carry.in_the_way(place, seen_at, facing.turn_rad, carry.REAL_ARM_SWING_RIGHT_RAD)
                     if blocked:
                         raise SystemExit(f"stopped before the pickup: {blocked}. Move the bowl or the ball.")
-                if live:
+                if trained_driver is not None:
+                    from understudy.eye import StreamDriver
+
+                    # The student stands in for both the ball's position, which it is never given, and the policy.
+                    record_of_run["driven_by"] = Path(args.driver).name
+                    ball = stream = StreamDriver(trained_driver, live.picture, facing.ball, policy.interface)
+                elif live:
                     ball = CameraBall(wrist, lambda: live.look(colour), facing.ball, latency_steps=args.camera_latency_steps)
                 else:
                     ball = PlacedBall(*facing.ball)
             else:
                 ball = PlacedBall(*args.ball)
                 record_of_run["ball"] = list(args.ball)
-            steps = run_pickup(
-                io, policy, frame, ball, args.target, args.seconds, advance=robot.advance,
-                max_speed=args.max_speed, max_lead=args.max_lead, on_step=record,
-            )
+            from understudy.eye import NotSure
+
+            try:
+                steps = run_pickup(
+                    io, stream or policy, frame, ball, args.target, args.seconds, advance=robot.advance,
+                    max_speed=args.max_speed, max_lead=args.max_lead, on_step=record,
+                )
+            except NotSure as error:
+                raise SystemExit(f"stopped during the pickup: {error}. The arm is being lowered.") from None
             last = steps[-1]
             print("finished. gripper", "open" if last.command.gripper_open else "closed",
                   f"finger angle {last.joint_angles[5]:.2f} rad (above {PlacedBall.HELD_FINGER_RAD} with the gripper closed means it is holding something)")
@@ -659,6 +802,13 @@ def cmd_run(args) -> None:
                                             "max_speed": args.max_speed, "max_lead": args.max_lead,
                                             "control_hz": arm.CONTROL_HZ, "steps": log}) + "\n")
             print(f"{len(log)} steps recorded in {log_path}")
+            if stream is not None and stream.pictures:
+                import numpy as np
+
+                seen_path = log_path.with_name(log_path.name.replace(".json", "") + ".pictures.npz")
+                np.savez_compressed(seen_path, pictures=np.asarray(stream.pictures, dtype=np.uint8))
+                slowest = max(thought["thinking_ms"] for thought in stream.thoughts)
+                print(f"the {len(stream.pictures)} pictures the student was shown are in {seen_path}; its slowest step took {slowest:.1f} ms")
             # Whatever happened, lower the arm to where it started instead of letting it drop.
             try:
                 robot.move_slowly(rest, args.move_seconds)
@@ -744,6 +894,29 @@ def main() -> None:
                      help="After the pickup, carry the ball to this place on the bare desk and put it down: degrees round "
                      "from straight ahead (positive to the arm's left, up to 90 either way) and centimetres from the swivel "
                      "axis. Off unless given.")
+    run.add_argument("--stream_capture", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
+                     help="For --camera live: ask the camera itself for pictures of this size, which must be 16 by 9. At its full "
+                     "1280 x 720 the first arm's camera gives ten pictures a second; measure a smaller size with "
+                     "scripts/stream_lateness.py before using it here.")
+    run.add_argument("--driver", help="With --camera live: a trained student (an .onnx file from scripts/export_eye.py --driver, with "
+                     "its .json beside it) that moves the arm itself from the camera's pictures, thirty times a second, in place "
+                     "of the policy that is told where the ball is. The same speed and lead limits apply. It finds the ball "
+                     "first, as --eye does, and stops if it loses sight of it.")
+    run.add_argument("--eye_must_agree", action="store_true",
+                     help="With --eye or --driver: also run the hand-written finder on each look's picture, and take a ball only "
+                     "if the two put it within 2.5 cm of each other. Needs the camera's calibration file. A guard against something "
+                     "that only looks like the ball; it does not catch an error the two share, such as the arm's own calibration.")
+    run.add_argument("--compare_finders", action="store_true",
+                     help="With --eye or --driver: at every look also run the hand-written finder on the same picture, and once the "
+                     "arm is facing the ball at the start pose take one more picture and ask both again. Each answer is printed "
+                     "on its own line beginning 'place', in the arm's own frame, and recorded with the joints as read. Nothing is "
+                     "decided by it. For checking the camera and the arm against a touch; use it with --find_only.")
+    run.add_argument("--sweep_deg", type=float, default=57.0,
+                     help="With --camera: how far round to either side the raised arm swivels to look for the ball. The looks are "
+                     "at 0, 29 and 57 degrees; 29 leaves the two widest out, 0 looks straight ahead only.")
+    run.add_argument("--eye", help="With --camera look: a trained eye (an .onnx file from scripts/export_eye.py, with its .json "
+                     "beside it) that says where the ball is in each still picture, in place of the hand-written finder. The "
+                     "pickup itself is unchanged. If the eye is not sure there is a ball, the arm does not go for one.")
     run.add_argument("--find_only", action="store_true",
                      help="With --camera: find the ball, turn to face it, say where it is, and lower the arm without a pickup.")
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))
