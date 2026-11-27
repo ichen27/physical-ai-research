@@ -84,7 +84,7 @@ def main() -> None:
     capacity = args.views + (args.first + args.each * (args.rounds - 1)) * steps_each + 1000
     experience = dagger.Experience(data, capacity)
     nominal = WristCamera.load(args.camera) if args.camera else sim_look.student_camera()
-    camera_notes = {"nominal_camera": asdict(nominal), "nominal_camera_from": args.camera or "the built-in rough fit",
+    camera_notes = {"nominal_camera": asdict(nominal), "nominal_camera_from": f"a camera file, {Path(args.camera).name}" if args.camera else "the built-in rough fit",
                     "speed_limit_rad_s": student.SPEED_LIMIT_RAD_S, "lead_limit_rad": student.LEAD_LIMIT_RAD,
                     "look_pose": list(dagger.LOOK_POSE)}
     torch.manual_seed(args.seed)

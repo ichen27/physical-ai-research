@@ -369,5 +369,42 @@ class GatheringTests(unittest.TestCase):
         self.assertGreater(float(np.abs(views["proprio"][:, 0]).max()), 0.05)  # poses away from the start pose
 
 
+class WholeJobTests(unittest.TestCase):
+    """A bowl in the scene and in the pictures: the teacher lifts the ball and the fixed carry drops it in."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from understudy import sim_bowl
+
+            cls.sim_bowl = sim_bowl
+            cls.bowl = sim_bowl.Bowl()
+            cls.teacher = runtime.OnnxPolicy(POLICY)
+            cls.sim, cls.scene = dagger.bench(also=lambda spec: sim_bowl.add_bowl(spec, cls.bowl))
+        except ImportError as error:
+            raise unittest.SkipTest(f"needs mujoco and onnxruntime: {error}") from error
+        except Exception as error:  # no OpenGL on this machine
+            raise unittest.SkipTest(f"cannot render: {error}") from error
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.scene.close()
+
+    def test_the_bowl_is_stood_on_the_desk_after_the_scene_is_put_back_and_the_ball_ends_in_it(self):
+        from understudy import carry
+
+        place = carry.SetDown(math.radians(88), 0.24, self.bowl.rim_m, self.bowl.opening_m)
+        ball = (0.19, 0.03)
+        self.assertIsNone(carry.in_the_way(place, ball))
+        outcome, _ = dagger.run_attempt(self.sim, self.scene, random.Random(3), teacher=self.teacher, drive="teacher", facing="exact",
+                                        seconds=pickup.EPISODE_SECONDS * 3, ball=ball,
+                                        after_reset=lambda: self.sim_bowl.place_bowl(self.sim, place.xy))
+        self.assertLess(math.dist(self.sim_bowl.bowl_xy(self.sim), place.xy), 0.001)  # there, and not pushed by the pickup
+        self.assertTrue(outcome["lifted"])
+        done = carry.carry(self.sim, self.sim.calibration, place, self.sim.advance, say=lambda _: None)
+        self.assertTrue(done.done, done.said)
+        self.assertTrue(self.sim_bowl.ball_is_in(self.sim, self.bowl))
+
+
 if __name__ == "__main__":
     unittest.main()

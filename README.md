@@ -21,6 +21,7 @@ This is an early project. Read this section before relying on anything.
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
 | Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm it has picked the ball up once, with speed limits, after a failed first attempt (see [Real arm](#real-arm)) |
 | Carrying the ball to a bowl and dropping it in | A fixed move after the pickup, measured **in MuJoCo only**: every ball lifted ended in the bowl. Not run on the real arm (see [Carrying the ball to a bowl](#carrying-the-ball-to-a-bowl)) |
+| A pickup policy that sees the camera's picture instead of being told where the ball is | A first one, trained on a Mac to find out what the paid training must get right. In MuJoCo it lifts about 70% against the told policy's 98%; on real pictures it places the ball to about 1 cm but is sure of it in only 17 of 65, because the real camera shows the ball a colour the simulated pictures lacked. **Not run on the real arm.** See [results](results/student/2026-11-26-stage-a/README.md) |
 | Locating the ball with the camera on the wrist | Detector, calibration and pickup written and tested on saved pictures and in MuJoCo. **On the real arm only the read-only `look` step has run**: the camera is not yet calibrated there and no real pickup has used it (see [Wrist camera](#wrist-camera)) |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -73,6 +74,9 @@ Known limitations:
 | `scripts/train_student.py` | Trains the picture-driven student in MuJoCo, on one computer with no GPU rental |
 | `scripts/evaluate_student.py` | Measures the student's pickup rate in MuJoCo beside the teacher's |
 | `scripts/student_on_real_pictures.py` | Scores where the student says the ball is on real pictures with known ball positions |
+| `scripts/evaluate_search.py` | Measures the student searching a wide sector for the ball, with no ball, and with balls out of reach |
+| `scripts/evaluate_student_carry.py` | Measures the whole job: find the ball, pick it up, carry it to a bowl and drop it in |
+| `scripts/student_real_checks.py` | Further checks on real pictures: every picture, the ball's colour against the simulated one, one change at a time |
 | `scripts/record_rollout.py` | Records one attempt in Isaac Lab as a fixture for the tests |
 | `scripts/real_arm.py` | Calibrates the real arm and its camera and runs a policy on it. One real pickup so far, with speed limits and without the camera |
 | `results/` | Trained policies and their measurements |
@@ -316,6 +320,7 @@ This runs the unit tests and compiles every Python file. The tests include the b
 | [Ball pickup with claw-shaped fingers, 2026-11-24](results/pickup/2026-11-24-claw/README.md) | Current pickup policy, holds the ball in two simulators | MuJoCo video and still frames, exported policy and its interface file, eleven MuJoCo evaluation files. The training checkpoint is on a stopped rented machine |
 | [Wrist camera, 2026-11-25](results/camera/2026-11-25-wrist-camera/README.md) | Picking the ball up from where the wrist camera sees it, in MuJoCo. Not yet on the real arm | Twenty-nine MuJoCo measurement files for the pickup (fourteen conditions and fifteen distances), four for the calibration procedure, one rendered wrist picture |
 | [Carrying the ball to a bowl, 2026-11-26](results/carry/2026-11-26-bowl/README.md) | After the pickup: carry to a bowl at the side and drop the ball in, in MuJoCo. Not on the real arm | MuJoCo video and still frames, fifty measurement files (bowl size, rim height, bounce, misplaced bowl, release height, speed, bare desk) |
+| [A policy that sees the picture, stage A, 2026-11-26](results/student/2026-11-26-stage-a/README.md) | A student trained on a Mac from simulated pictures, to find what the GPU-trained one must get right. Simulation and saved real pictures only | The trained student, its training record, seventeen measurement files in MuJoCo and on real pictures, and the list of what the next stage has to carry over |
 | [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Earlier pickup policy, which dropped the ball in the second simulator | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
 
 ## Contributing

@@ -52,14 +52,21 @@ IN_VIEW = 0.5  # the share of the ball's disc that must be seen for it to count 
 BURN_IN = 8  # steps at the start of each training window that only warm the memory up
 
 
-def bench(nominal=None) -> tuple[MujocoArm, Scene]:
+def bench(nominal=None, also=None) -> tuple[MujocoArm, Scene]:
     """A simulated arm with a dressed scene and wrist camera, as every attempt here uses.
 
     ``nominal`` is the camera as it is believed to be (an ``understudy.camera_model.WristCamera``
     at the real picture's full size); left out, it is ``understudy.sim_look.student_camera()``.
+    ``also`` adds something more to the scene, as ``understudy.sim_bowl.add_bowl`` adds a bowl.
     """
     nominal = nominal or student_camera()
-    model = build_model(wrist_camera=nominal.resized(2 * PICTURE_WIDTH, 2 * PICTURE_HEIGHT), extras=dress)
+
+    def extras(spec) -> None:
+        dress(spec)
+        if also is not None:
+            also(spec)
+
+    model = build_model(wrist_camera=nominal.resized(2 * PICTURE_WIDTH, 2 * PICTURE_HEIGHT), extras=extras)
     sim = MujocoArm(model, command_delay_s=0.015, profile_time_s=arm.VENDOR_PROFILE_TIME_S)
     return sim, Scene(sim, nominal)
 
@@ -212,7 +219,8 @@ def search_for_ball(sim: MujocoArm, scene: Scene, brain: Brain, hold_target: Seq
 def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, brain: Brain | None = None,
                 drive: str = "student", facing: str = "student", seconds: float = pickup.EPISODE_SECONDS,
                 record: bool = False, blank: tuple[int, int] | None = None, ball_source=None,
-                ball: Sequence[float] | None = None, ball_present: bool = True) -> tuple[dict, Episode | None]:
+                ball: Sequence[float] | None = None, ball_present: bool = True,
+                after_reset: Callable[[], None] | None = None) -> tuple[dict, Episode | None]:
     """One attempt: a ball ahead of the arm, a new look; rise and look for it, face it, come down to the
     start pose, and run the policy with the speed limits.
 
@@ -223,12 +231,15 @@ def run_attempt(sim: MujocoArm, scene: Scene, rng: random.Random, teacher=None, 
     ball at a chosen place instead of a random one ahead of the arm; with ``ball_present``
     false there is no ball on the desk at all. ``ball_source`` "student"
     feeds a teacher that drives the student's own idea of where the ball is instead of the
-    truth: the student's eye with the teacher's hand. Returns what happened and, if asked, the record.
+    truth: the student's eye with the teacher's hand. ``after_reset`` is called once the scene
+    has been put back, to stand something else on the desk. Returns what happened and, if asked, the record.
     """
     ball = tuple(ball) if ball is not None else place_ball(rng)
     target = [rng.uniform(*pickup.HOLD_TARGET[axis]) for axis in "xyz"]
     sim.reset(ball if ball_present else NOWHERE)
     sim.after_step = None
+    if after_reset is not None:
+        after_reset()
     scene.new_look(rng, ball)
     outcome = {"found": True, "lifted": False, "ever_lifted": False, "stopped": False, "facing_error_m": None,
                "refused": None, "looks": 1}

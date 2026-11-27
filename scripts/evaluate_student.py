@@ -89,7 +89,7 @@ def main() -> None:
             "simulator": f"MuJoCo {mujoco.__version__}, vendor model, rendered wrist camera, varied looks",
             "student": str(args.student),
             "student_training": notes,
-            "teacher": str(args.teacher),
+            "teacher": str(Path(args.teacher).resolve().relative_to(REPO)) if Path(args.teacher).resolve().is_relative_to(REPO) else Path(args.teacher).name,
             "attempts": len(outcomes),
             "seed": args.seed,
             "looks": "desk patterns the student was trained on" if args.seen_looks else
