@@ -4,6 +4,8 @@ Train a small robot arm in simulation, then run the trained policy on the real a
 
 ![The simulated arm picking up a ball](results/pickup/2026-11-24-claw/mujoco-pickup-frames.png)
 
+This repository is `physical-ai-research`. Understudy is the project in it, and the Python package is still `understudy`. The repository was named `understudy` on GitHub until 27 November 2026; the old address redirects here.
+
 The arm is the ROBOTIS OMX follower (five joints plus a gripper, DYNAMIXEL XL430 and XL330 servos). Policies are trained with reinforcement learning in NVIDIA Isaac Lab on a rented GPU and are meant to run on the physical arm from a laptop.
 
 ## Status
@@ -74,8 +76,8 @@ Known limitations:
 The parts that work today need only Python:
 
 ```sh
-git clone https://github.com/ichen27/understudy.git
-cd understudy
+git clone https://github.com/ichen27/physical-ai-research.git
+cd physical-ai-research
 python3 -m venv .venv && . .venv/bin/activate
 bash ci/run.sh
 ```

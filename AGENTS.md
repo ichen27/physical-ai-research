@@ -1,6 +1,6 @@
 # Understudy: instructions for agents
 
-Repository: https://github.com/ichen27/understudy (public, MIT). Canonical checkout: Mac mini SSD, `code/understudy`.
+Repository: https://github.com/ichen27/physical-ai-research (public, MIT), named `understudy` on GitHub until 2026-11-27. Canonical checkout: Mac mini SSD, `code/understudy` (the local folder and the Python package keep the name).
 
 ## What this is
 
@@ -46,6 +46,6 @@ Feature branches and pull requests into `main`. No direct pushes of implementati
 
 - Launcher (Limelight Labs OS): no.
 - Repository visibility: public.
-- Name: brand name, Understudy.
+- Name: brand name, Understudy, for the project and the Python package. The GitHub repository was renamed `physical-ai-research` on 2026-11-27 (Ivan's choice), as a home for more robot work than this one arm project.
 - License: MIT.
 - Announcement: neither for now. Ask again when there is a working result.
