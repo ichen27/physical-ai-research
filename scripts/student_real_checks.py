@@ -11,8 +11,9 @@ arm's pose and the ball's true place for some of the pictures.
 
 ``all``: on every real picture that shows the ball whole, is the student sure the ball is
 there; and where the ball's place is known, how far out is it. Where the arm's pose was not
-recorded, the start pose is assumed (the look pose for a set named ``find...``), and only
-"is it sure" is scored.
+recorded, the start pose is assumed (every such picture so far was taken from it or from
+near it), and only "is it sure" is scored. The eye uses the pose: told the wrong one, it is
+less sure of a ball it is sure of when told the right one.
 
 ``colour``: the ball's colour as the student sees it, in the real pictures against the
 simulated pictures it is trained on.
@@ -40,7 +41,6 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from understudy import arm, camera_calibration, pickup, sim_look, student, vision  # noqa: E402
-from understudy.seek import LOOK_POSE  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("student_on_real_pictures", REPO / "scripts" / "student_on_real_pictures.py")
 real = importlib.util.module_from_spec(_spec)
@@ -95,7 +95,7 @@ def check_all(brain: student.Brain, samples: Path, calibrated: Calibrated) -> di
             if known is not None:
                 pose = calibrated.calibration.to_rad(known[0].ticks)
             else:
-                pose = list(LOOK_POSE if folder.name.startswith("find") else pickup.START_POSE)
+                pose = list(pickup.START_POSE)
             (x, y, _), sure = brain.glance(sim_look.shrink(image), real.readings_for(pose))
             rows.append({"set": folder.name, "picture": path.name, "pose_recorded": known is not None, "sure": round(sure, 3),
                          "error_mm": round(1000 * math.dist((x, y), known[1]), 1) if known is not None else None})

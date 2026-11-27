@@ -165,6 +165,60 @@ class NetTests(unittest.TestCase):
                                    student.Brain(self.net).step(picture(5), readings, GUESS)["moves"], atol=1e-6)
 
 
+class FilteredInputTests(unittest.TestCase):
+    """Students that are given a filter's answer instead of the colour picture."""
+
+    def with_ball(self) -> np.ndarray:
+        image = np.full((PICTURE_HEIGHT, PICTURE_WIDTH, 3), 120, np.uint8)
+        image[60:, 100:] = 10
+        image[20:42, 50:72] = (131, 186, 255)  # the real camera's pale peach: blue, green, red
+        return image
+
+    def test_each_input_has_its_own_number_of_layers_and_still_answers(self):
+        for kind, layers in (("colour", 3), ("mask", 1), ("mask+grey", 2)):
+            net = student.StudentNet(input=kind).eval()
+            self.assertEqual(net.eye[0].in_channels, layers)
+            brain = student.Brain(net)
+            out = brain.step(self.with_ball(), np.zeros(student.PROPRIO_SIZE, np.float32), GUESS)
+            self.assertEqual(len(out["moves"]), 5)
+        with self.assertRaises(ValueError):
+            student.StudentNet(input="infrared")
+
+    def test_the_mask_is_the_ball_and_not_the_desk(self):
+        mask = student.ball_coloured(torch.from_numpy(self.with_ball()).permute(2, 0, 1)[None])[0]
+        self.assertEqual(float(mask[20:42, 50:72].mean()), 1.0)
+        self.assertEqual(float(mask[:15].max()), 0.0)
+
+    def test_a_masked_student_cannot_tell_two_colours_that_both_pass_the_filter(self):
+        net = student.StudentNet(input="mask").eval()
+        one, other = self.with_ball(), self.with_ball()
+        other[20:42, 50:72] = (40, 120, 240)  # a deep orange in the same place
+        readings = torch.zeros(1, student.PROPRIO_SIZE)
+        seen = [net.look(torch.from_numpy(image).permute(2, 0, 1)[None], readings)[1] for image in (one, other)]
+        self.assertTrue(torch.allclose(seen[0], seen[1]))  # the colour gap is dealt with in the filter
+
+    def test_masks_are_spoiled_in_training_only(self):
+        torch.manual_seed(3)
+        pictures = torch.from_numpy(np.stack([self.with_ball()] * 40)).permute(0, 3, 1, 2)
+        clean = student.ball_coloured(pictures)
+        spoiled = student.spoiled(clean)
+        added = (spoiled - clean).clamp(min=0).flatten(1).mean(1)
+        lost = (clean - spoiled).clamp(min=0).flatten(1).sum(1)
+        self.assertGreater(float(added.max()), 0.02)  # some pictures get many specks
+        self.assertLess(float(added.median()), 0.05)  # most get few
+        self.assertGreater(int((lost > 0).sum()), 8)  # a hole or a bite in a good share of them
+        self.assertGreater(int((lost == 0).sum()), 5)  # and none in others
+        net = student.StudentNet(input="mask")
+        self.assertTrue(torch.equal(net.eval().shown(pictures)[:, 0], clean * 255.0))
+        self.assertFalse(torch.equal(net.train().shown(pictures)[:, 0], clean * 255.0))
+
+    def test_the_input_is_saved_with_the_student(self):
+        with tempfile.TemporaryDirectory() as folder:
+            student.save(student.StudentNet(input="mask+grey"), Path(folder) / "s.pt")
+            net, _ = student.load(Path(folder) / "s.pt")
+            self.assertEqual(net.input, "mask+grey")
+
+
 class StubScene:
     """Stands in for the simulated camera: a fixed picture, and a ball that is where it is said to be."""
 

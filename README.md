@@ -21,7 +21,7 @@ This is an early project. Read this section before relying on anything.
 | Cross-check in a second simulator (MuJoCo, vendor arm model) | Working, no GPU needed |
 | Real-arm runner and calibration tool | Written and tested against a simulated arm. On the real arm it has picked the ball up once, with speed limits, after a failed first attempt (see [Real arm](#real-arm)) |
 | Carrying the ball to a bowl and dropping it in | A fixed move after the pickup, measured **in MuJoCo only**: every ball lifted ended in the bowl. Not run on the real arm (see [Carrying the ball to a bowl](#carrying-the-ball-to-a-bowl)) |
-| A pickup policy that sees the camera's picture instead of being told where the ball is | A first one, trained on a Mac to find out what the paid training must get right. In MuJoCo it lifts about 70% against the told policy's 98%; on real pictures it places the ball to about 1 cm but is sure of it in only 17 of 65, because the real camera shows the ball a colour the simulated pictures lacked. **Not run on the real arm.** See [results](results/student/2026-11-26-stage-a/README.md) |
+| A pickup policy that sees the camera's picture instead of being told where the ball is | A first one, trained on a Mac to find out what the paid training must get right. In MuJoCo it lifts about 70% against the told policy's 98%; on real pictures it places the ball to about 1 cm but is sure of it in only 18 of 65, because the real camera shows the ball a colour the simulated pictures lacked. **Not run on the real arm.** See [results](results/student/2026-11-26-stage-a/README.md) |
 | Locating the ball with the camera on the wrist | Detector, calibration and pickup written and tested on saved pictures and in MuJoCo. **On the real arm only the read-only `look` step has run**: the camera is not yet calibrated there and no real pickup has used it (see [Wrist camera](#wrist-camera)) |
 
 In simulation the first policy reached within 2 cm on 5,000 of 5,000 scored reaches, with a median error of 1 mm. With servos six times stiffer or 2.5 times softer than it was trained on, it still reached within 2 cm every time, but the median error rose to 7–11 mm. Nothing has been run on a real arm yet.
@@ -55,6 +55,7 @@ Known limitations:
 | `understudy/camera_collect.py` | Has the arm take those pictures itself: notices the ball, learns its colour, chooses the poses |
 | `understudy/camera_feed.py` | Pictures from the real camera, by name, and from no other camera |
 | `understudy/seek.py` | Looks for the ball and turns the arm to face it |
+| `understudy/eye.py` | A trained student's eye on its own: where the ball is from one still picture. Needs no PyTorch |
 | `understudy/sim_look.py` | Simulated wrist-camera pictures with a different look every attempt |
 | `understudy/student.py` | A pickup policy that sees the camera's picture instead of being told where the ball is |
 | `understudy/dagger.py` | Teaches that student by having it drive while the trained policy says what it would have done |
@@ -73,6 +74,7 @@ Known limitations:
 | `scripts/camera_watch.sh` | Left running in Terminal on the Mac the camera is plugged into; takes a picture when asked |
 | `scripts/train_student.py` | Trains the picture-driven student in MuJoCo, on one computer with no GPU rental |
 | `scripts/evaluate_student.py` | Measures the student's pickup rate in MuJoCo beside the teacher's |
+| `scripts/export_eye.py` | Exports a student's eye to ONNX for the computer at the arm |
 | `scripts/student_on_real_pictures.py` | Scores where the student says the ball is on real pictures with known ball positions |
 | `scripts/evaluate_search.py` | Measures the student searching a wide sector for the ball, with no ball, and with balls out of reach |
 | `scripts/evaluate_student_carry.py` | Measures the whole job: find the ball, pick it up, carry it to a bowl and drop it in |
@@ -253,6 +255,17 @@ python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.on
     --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: the same, then picks it up
 ```
 
+**A trained eye in place of the hand-written finder** (`--eye`). `run --camera look --eye FILE` asks a trained network where the ball is in each still picture, and how sure it is, in place of the hand-written finder. Everything else is the same: the raised look, the sweep, facing the ball, a second look, the check that the ball is within reach, and the pickup by the policy that is told where the ball is. If the eye is not sure there is a ball (under one half), that look counts as showing none, so the arm never goes for a ball the eye is not sure of. An eye trained for a clearly different camera than this arm's camera file describes is refused before anything is powered. `--sweep_deg 29` (or `0`) leaves the widest looks out. **Tested against the simulated arm and on saved real pictures; not yet run on the real arm.**
+
+```sh
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look \
+    --eye results/student/2026-11-26-mask-and-grey/eye.onnx --find_only --max_speed 0.3 --max_lead 0.05 --seconds 15   # POWERED: find only
+python scripts/real_arm.py run --policy results/pickup/2026-11-24-claw/policy.onnx --camera look \
+    --eye results/student/2026-11-26-mask-and-grey/eye.onnx --max_speed 0.3 --max_lead 0.05 --seconds 15               # POWERED: and pick up
+```
+
+The eye in that file is from [a student given a filtered picture](results/student/2026-11-26-mask-and-grey/README.md); on 65 saved real pictures it was sure of the ball in every one and placed it to 8 mm at the median. It needs numpy, OpenCV and onnxruntime, not PyTorch. It does not need the camera's calibration file, but if the file is there the eye is checked against it.
+
 **Tell `camera-fit` where the ball was, if you can.** With nothing known, the fit puts the camera and the ball wherever the pictures agree, in the arm model's frame *with the arm raised*. That frame is only as true as the arm's joint zeros, and nothing in the fit's own error shows whether they are. Two things are measured:
 
 - The author's arm's zeros come from four touches of the desk, all on one line. Moving the shoulder, elbow and wrist zeros by 1.5, 2.9 and 4.0 degrees changes how well those touches fit by 1 mm (2.6 to 3.5), so the touches hold the zeros only loosely.
@@ -321,6 +334,7 @@ This runs the unit tests and compiles every Python file. The tests include the b
 | [Wrist camera, 2026-11-25](results/camera/2026-11-25-wrist-camera/README.md) | Picking the ball up from where the wrist camera sees it, in MuJoCo. Not yet on the real arm | Twenty-nine MuJoCo measurement files for the pickup (fourteen conditions and fifteen distances), four for the calibration procedure, one rendered wrist picture |
 | [Carrying the ball to a bowl, 2026-11-26](results/carry/2026-11-26-bowl/README.md) | After the pickup: carry to a bowl at the side and drop the ball in, in MuJoCo. Not on the real arm | MuJoCo video and still frames, fifty measurement files (bowl size, rim height, bounce, misplaced bowl, release height, speed, bare desk) |
 | [A policy that sees the picture, stage A, 2026-11-26](results/student/2026-11-26-stage-a/README.md) | A student trained on a Mac from simulated pictures, to find what the GPU-trained one must get right. Simulation and saved real pictures only | The trained student, its training record, seventeen measurement files in MuJoCo and on real pictures, and the list of what the next stage has to carry over |
+| [A student given a filtered picture, 2026-11-26](results/student/2026-11-26-mask-and-grey/README.md) | The same student shown the ball's colour as a mask beside the picture in grey. Its eye is sure of the real ball in 65 of 65 saved real pictures. Not on the real arm | The trained student, its eye exported to ONNX, its training record, the real-picture check |
 | [Ball pickup with variation, 2026-11-24](results/pickup/2026-11-24-varied/README.md) | Earlier pickup policy, which dropped the ball in the second simulator | Videos from both simulators, exported policy and its interface file, training checkpoint, run settings, training curves, eight Isaac Lab and six MuJoCo evaluation files, and the earlier absolute-command version |
 
 ## Contributing

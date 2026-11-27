@@ -47,9 +47,8 @@ import torch
 from torch import nn
 
 from . import arm
-from .sim_look import PICTURE_HEIGHT, PICTURE_WIDTH
+from .eye import FILTER, INPUTS, PICTURE_HEIGHT, PICTURE_WIDTH, PROPRIO_SIZE  # noqa: F401
 
-PROPRIO_SIZE = 20
 GUESS_SIZE = 2
 # The joint readings the student gets, taken from the teacher's 33 inputs: joint angles relative
 # to the start pose (6), joint speeds (6), the hold target (3), and how far each arm joint's target
@@ -81,17 +80,11 @@ def action_from_moves(moves: Sequence[float], gripper_open: bool, scale: float) 
     return [float(np.clip(m, -1.0, 1.0)) * _STEP_RAD / scale for m in moves] + [1.0 if gripper_open else -1.0]
 
 
-# What the network is shown of each picture. "colour" is the picture as it is. The other two put it
-# through a fixed filter first, the same for simulated and real pictures, so that what the ball's
-# colour happens to be is dealt with once, in the filter: "mask" is only which pixels are the ball's
-# colour, and "mask+grey" is that beside the picture in grey, in which the fingers and the desk still show.
-INPUTS = {"colour": 3, "mask": 1, "mask+grey": 2}
-# The filter's colour test, after the grey veil is taken off, as ``understudy.vision.orange_mask`` makes it.
-# Wide: red through orange to yellow, and pale. Other things pass it too; telling them from the ball is the network's job.
-FILTER_HUE_DEG = (0.0, 55.0)
-FILTER_SATURATION_MIN = 0.25
-FILTER_VALUE_MIN = 0.22
-FILTER_VEIL_MAX = 90.0
+# The filter's colour test, as ``understudy.eye`` and ``understudy.vision.orange_mask`` make it.
+FILTER_HUE_DEG = (FILTER.hue_low, FILTER.hue_high)
+FILTER_SATURATION_MIN = FILTER.saturation_min
+FILTER_VALUE_MIN = FILTER.value_min
+FILTER_VEIL_MAX = FILTER.veil_max
 
 
 def ball_coloured(pictures: torch.Tensor) -> torch.Tensor:
@@ -189,7 +182,11 @@ class StudentNet(nn.Module):
         Returns the features passed on to the memory and the ball seen (N x 4: x, y, z in
         metres, then how sure it is that the ball is in view, before the sigmoid).
         """
-        features = self.eye(self.shown(pictures) / 255.0 - 0.5)
+        return self.look_at(self.shown(pictures), proprio)
+
+    def look_at(self, shown: torch.Tensor, proprio: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """``look`` on pictures already put through ``shown``. This is the part that is exported as the eye."""
+        features = self.eye(shown / 255.0 - 0.5)
         flat = features.flatten(2)
         # Where each feature fires in the picture: a soft arg-max, which suits "where is the ball".
         weights = torch.softmax(flat, dim=2)

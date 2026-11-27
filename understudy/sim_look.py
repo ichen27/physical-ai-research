@@ -33,11 +33,10 @@ import mujoco
 import numpy as np
 
 from .camera_model import WristCamera, rotation_from_vector, vector_from_rotation
+from .eye import PICTURE_HEIGHT, PICTURE_WIDTH, shrink  # noqa: F401  (the picture the student sees is defined with its eye)
 from .kinematics import Chain
 from .mujoco_arm import WRIST_CAMERA, MujocoArm
 
-# The picture the student network sees. The real camera's 1280 x 720 shrunk ten times.
-PICTURE_WIDTH, PICTURE_HEIGHT = 128, 72
 _RENDER_SCALE = 2  # rendered at twice that and shrunk, as the real picture is shrunk from far larger
 # Rendered with a wider view than the camera's, so that a lens that bends lines inward has something to show at its edges.
 _WIDE = 1.3
@@ -415,15 +414,6 @@ class Scene:
         """The picture as it reaches the computer: the look's number of control steps late. Call once a step."""
         self._late = [self.picture_now(), *self._late[: self.look.latency_steps]]
         return self._late[-1]
-
-
-def shrink(image_bgr: np.ndarray) -> np.ndarray:
-    """A real picture from the camera at the size the student sees."""
-    if image_bgr.shape[1] * PICTURE_HEIGHT != image_bgr.shape[0] * PICTURE_WIDTH:
-        raise ValueError(f"a picture of the camera's 16 by 9 shape is needed, got {image_bgr.shape[1]} x {image_bgr.shape[0]}")
-    if image_bgr.shape[1] == PICTURE_WIDTH:
-        return image_bgr
-    return cv2.resize(image_bgr, (PICTURE_WIDTH, PICTURE_HEIGHT), interpolation=cv2.INTER_AREA)
 
 
 def student_camera() -> WristCamera:

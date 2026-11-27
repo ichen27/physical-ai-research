@@ -22,6 +22,7 @@ and then:
 
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --find_only   # find it and say where; no pickup
     python scripts/real_arm.py run --policy <policy.onnx> --camera look   # one look, then pick it up
+    python scripts/real_arm.py run --policy <policy.onnx> --camera look --eye <eye.onnx>   # the same, a trained eye finding the ball
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --bowl 0.0 0.24 0.0 0.165 0.065   # ... and drop it in a bowl
     python scripts/real_arm.py run --policy <policy.onnx> --camera look --set_down 80 22   # ... or put it down on the desk
     python scripts/real_arm.py run --policy <policy.onnx> --camera live   # follow the ball; start from Terminal
@@ -309,6 +310,36 @@ def load_camera(args):
     return WristCamera.load(path), vision.colour_from(json.loads(path.read_text()).get("colour"))
 
 
+def load_eye(args):
+    """The trained eye named by --eye, checked against this arm's camera file if there is one."""
+    from understudy.eye import Eye
+
+    try:
+        eye = Eye(args.eye)
+    except (OSError, ValueError, KeyError) as error:
+        raise SystemExit(f"--eye: {error}") from None
+    trained = eye.notes.get("student_training", {}).get("nominal_camera")
+    path = Path(args.camera_file)
+    if trained is None or not path.exists():
+        print(f"The eye {Path(args.eye).name} cannot be checked against this arm's camera: "
+              + ("it does not say what camera it was trained for." if trained is None else f"{path} does not exist."))
+        return eye
+    from understudy.camera_model import WristCamera, rotation_from_vector
+
+    here = WristCamera.load(path)
+    focal = abs(here.focal_px / here.width * trained["width"] / trained["focal_px"] - 1.0)
+    shift = math.dist(here.mount_xyz, trained["mount_xyz"])
+    between = rotation_from_vector(here.mount_rotation).T @ rotation_from_vector(trained["mount_rotation"])
+    turn = math.degrees(math.acos(max(-1.0, min(1.0, (float(between[0][0] + between[1][1] + between[2][2]) - 1.0) / 2.0))))
+    said = (f"The eye {Path(args.eye).name} was trained for a camera whose lens differs from this arm's by {focal * 100:.1f}% "
+            f"and whose mount differs by {shift * 1000:.1f} mm and {turn:.1f} degrees.")
+    # It was trained with the camera up to 4%, 3 mm and 1.5 degrees from where it was taken to be.
+    if focal > 0.10 or shift > 0.010 or turn > 4.0:
+        raise SystemExit(f"--eye: {said} That is too far for its answers to be trusted; train or export an eye for this camera.")
+    print(said + ("" if focal <= 0.04 and shift <= 0.003 and turn <= 1.5 else " That is more than it was trained to allow for: expect it to be less exact."))
+    return eye
+
+
 def watcher(args, robot=None, prefix="look"):
     from understudy.camera_feed import WatcherCamera
 
@@ -524,12 +555,17 @@ def cmd_run(args) -> None:
     calibration = arm.Calibration.load(args.calibration)
     policy = runtime.OnnxPolicy(args.policy)
     print(BASE_NOTE)
-    wrist = colour = live = None
+    wrist = colour = live = trained_eye = None
+    if args.eye and args.camera != "look":
+        raise SystemExit("--eye finds the ball in still pictures: use it with --camera look")
     if args.camera:
         from understudy import seek, vision
         from understudy.camera_feed import CameraError, LiveCamera
 
-        wrist, colour = load_camera(args)
+        if args.eye:
+            trained_eye = load_eye(args)
+        else:
+            wrist, colour = load_camera(args)
         if args.camera == "live":
             # Before the arm is powered, so that a camera macOS will not open costs nothing.
             try:
@@ -538,7 +574,8 @@ def cmd_run(args) -> None:
             except CameraError as error:
                 raise SystemExit(str(error)) from None
         print("The camera on the wrist will look for the ball"
-              + (" and follow it." if live else " once; after that the ball is assumed to stay where it was seen."))
+              + (" and follow it." if live else " once; after that the ball is assumed to stay where it was seen.")
+              + (" A trained eye, not the hand-written finder, says where the ball is; the arm does not move towards a ball it is not sure of." if trained_eye else ""))
     else:
         print(f"Ball taken to be at x={args.ball[0]} y={args.ball[1]}.")
         print("No camera: the ball is assumed to stay where it was put until the gripper holds it.")
@@ -595,8 +632,15 @@ def cmd_run(args) -> None:
                     def look_now():
                         return vision.find_blobs(eye.picture(), colour)
 
+                # Looks further round than --sweep_deg are left out; straight ahead is always looked from.
+                sweep = [angle for angle in seek.SCAN if abs(math.degrees(angle)) <= args.sweep_deg + 0.5]
                 try:
-                    facing = seek.face_ball(robot, calibration, wrist, look_now)
+                    if trained_eye is not None:
+                        from understudy.eye import finder
+
+                        facing = seek.face_ball(robot, calibration, None, None, find=finder(trained_eye, eye.picture), sweep=sweep)
+                    else:
+                        facing = seek.face_ball(robot, calibration, wrist, look_now, sweep=sweep)
                 except (ValueError, CameraError) as error:
                     raise SystemExit(f"stopped before the pickup: {error}") from None
                 if facing is None:
@@ -744,6 +788,12 @@ def main() -> None:
                      help="After the pickup, carry the ball to this place on the bare desk and put it down: degrees round "
                      "from straight ahead (positive to the arm's left, up to 90 either way) and centimetres from the swivel "
                      "axis. Off unless given.")
+    run.add_argument("--sweep_deg", type=float, default=57.0,
+                     help="With --camera: how far round to either side the raised arm swivels to look for the ball. The looks are "
+                     "at 0, 29 and 57 degrees; 29 leaves the two widest out, 0 looks straight ahead only.")
+    run.add_argument("--eye", help="With --camera look: a trained eye (an .onnx file from scripts/export_eye.py, with its .json "
+                     "beside it) that says where the ball is in each still picture, in place of the hand-written finder. The "
+                     "pickup itself is unchanged. If the eye is not sure there is a ball, the arm does not go for one.")
     run.add_argument("--find_only", action="store_true",
                      help="With --camera: find the ball, turn to face it, say where it is, and lower the arm without a pickup.")
     run.add_argument("--target", type=float, nargs=3, default=[0.19, 0.0, 0.13], metavar=("X", "Y", "Z"))

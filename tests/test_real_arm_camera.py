@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import math
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,10 +38,10 @@ def load_tool():
 class Bench:
     """A simulated arm with a wrist camera, and what the tool needs patched to use it."""
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, camera=None):
         from understudy import mujoco_arm
 
-        self.true_camera = mujoco_arm.sim_wrist_camera()
+        self.true_camera = camera or mujoco_arm.sim_wrist_camera()
         self.sim = mujoco_arm.MujocoArm(
             mujoco_arm.build_model(wrist_camera=self.true_camera), ODD, command_delay_s=0.015,
             profile_time_s=arm.VENDOR_PROFILE_TIME_S,
@@ -198,7 +199,7 @@ class ToolWithCameraTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, **extra},
+            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "sweep_deg": 57.0, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -336,6 +337,101 @@ class ArgumentTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as stop:
             tool.cmd_run(argparse.Namespace(ball=None, camera="look", dry_run=True))
         self.assertIn("limp", str(stop.exception))
+
+
+
+EYE = Path(__file__).resolve().parent.parent / "results" / "student" / "2026-11-26-mask-and-grey" / "eye.onnx"
+
+
+class ToolWithTrainedEyeTests(unittest.TestCase):
+    """``run --camera look --eye``: a trained eye says where the ball is; the pickup is the same. No PyTorch needed."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not EYE.exists():
+            raise unittest.SkipTest("no exported eye in this checkout")
+        try:
+            import onnxruntime  # noqa: F401
+
+            from understudy.camera_model import WristCamera
+
+            trained = json.loads(EYE.with_suffix(".json").read_text())["student_training"]["nominal_camera"]
+            cls.camera = WristCamera(**{key: tuple(value) if isinstance(value, list) else value for key, value in trained.items()})
+            cls.temp = tempfile.TemporaryDirectory()
+            cls.bench = Bench(Path(cls.temp.name), cls.camera.resized(640, 360))  # the camera the eye was trained for
+        except ImportError as error:
+            raise unittest.SkipTest(f"needs mujoco and onnxruntime: {error}") from error
+        except Exception as error:  # no OpenGL on this machine
+            raise unittest.SkipTest(f"cannot render: {error}") from error
+        cls.tool = load_tool()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.bench.view.close()
+        cls.temp.cleanup()
+
+    def run_pickup(self, ball, **extra):
+        self.bench.rest(ball)
+        self.bench.robot.log.clear()
+        out = self.bench.run(
+            self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, target=[0.19, 0.0, 0.13],
+            seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
+            dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
+            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "sweep_deg": 57.0, **extra},
+        )
+        return out
+
+    def test_the_eye_finds_the_ball_off_to_one_side_and_the_arm_picks_it_up(self):
+        distance, bearing = 0.2, math.radians(-30)
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        out = self.run_pickup(ball)
+        self.assertIn("cannot be checked against this arm's camera", out, out)  # there is no camera file on this bench
+        self.assertRegex(out, r"the eye sees the ball \(0\.\d\d sure\)")
+        said = re.search(r"ball seen ([\d.]+) cm from the swivel axis, ([+-]\d+) degrees round", out)
+        self.assertIsNotNone(said, out)
+        self.assertAlmostEqual(float(said.group(1)), 20.0, delta=1.5)
+        self.assertGreater(self.bench.highest, pickup.LIFTED_HEIGHT_M)  # lifted, from the eye's answer alone
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S,
+                        f"longest silence ended in: {self.bench.robot.longest_silence_at}")
+
+    def test_with_no_ball_the_eye_is_not_sure_and_nothing_is_picked_up(self):
+        out = self.run_pickup((0.6, 0.5))  # the ball is nowhere the camera can look
+        self.assertIn("the eye is not sure there is a ball in this picture", out, out)
+        self.assertIn("stopped before the pickup: the camera did not see the ball anywhere it looked", out)
+        self.assertNotIn("finished. gripper", out)
+        self.assertFalse(self.bench.robot.torque_on)
+        self.assertLess(self.bench.robot.longest_silence_s, QUIET_LIMIT_S)
+
+    def test_a_narrower_sweep_does_not_look_where_it_was_told_not_to(self):
+        distance, bearing = 0.2, math.radians(62)  # too far round to show in the look straight ahead
+        ball = (-0.01125 + distance * math.cos(bearing), distance * math.sin(bearing))
+        out = self.run_pickup(ball, sweep_deg=0.0, find_only=True)
+        self.assertIn("no ball seen looking +0 degrees round", out, out)
+        self.assertNotIn("29 degrees round", out)
+        self.assertNotIn("57 degrees round", out)
+        self.assertIn("stopped before the pickup: the camera did not see the ball anywhere it looked", out)
+        out = self.run_pickup(ball, sweep_deg=29.0, find_only=True)  # one look to each side is enough for this one
+        self.assertNotIn("57 degrees round", out)
+        self.assertRegex(out, r"ball seen ([\d.]+) cm from the swivel axis, \+5\d degrees round")
+        self.assertIn("no pickup was attempted because --find_only was given", out)
+
+    def test_an_eye_for_another_camera_is_refused_before_the_arm_is_powered(self):
+        import dataclasses
+
+        other = dataclasses.replace(self.camera, focal_px=self.camera.focal_px * 1.3)
+        other.save(self.bench.folder / "camera.json")
+        try:
+            out = self.run_pickup((0.2, 0.03))
+        finally:
+            (self.bench.folder / "camera.json").unlink()
+        self.assertIn("too far for its answers to be trusted", out, out)
+        self.assertEqual(self.bench.robot.log, [])  # never configured, never moved
+
+    def test_the_eye_works_only_with_still_pictures(self):
+        out = self.run_pickup((0.2, 0.03), camera="live")
+        self.assertIn("use it with --camera look", out)
+        self.assertEqual(self.bench.robot.log, [])
 
 
 if __name__ == "__main__":

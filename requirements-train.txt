@@ -2,3 +2,4 @@
 # Kept apart because the default Linux build of torch is several gigabytes; the tests
 # that need it are skipped where it is not installed.
 torch
+onnx  # only to export a student's eye for the arm (scripts/export_eye.py)
