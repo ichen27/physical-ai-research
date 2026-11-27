@@ -4,7 +4,7 @@ The same student as [stage A](../2026-11-26-stage-a/README.md), trained the same
 
 The simulated pictures also changed for this run: the ball is shown in the colour the real camera gives it (red at 255, green about 187, blue about 133) in four looks out of five, over a spread about three times what the real pictures showed.
 
-**Verdict so far: its eye recognises the real ball.** On saved real pictures only; **nothing here has run on the real arm**, and its measurements in simulation are still being made.
+**Verdict so far: its eye recognises the real ball.** On saved real pictures, and in one run on the real arm (below). Its measurements in simulation are still being made, and the student's own moves have not run on the real arm.
 
 ## On real pictures
 
@@ -19,6 +19,12 @@ The simulated pictures also changed for this run: the ball is shown in the colou
 On ten real pictures without the ball on the desk (the bare desk, its speckled surface, the other things on it) it is at most 10% sure, and under 4% in nine of them, where it needs half.
 
 This is not a blind test. The filter's width and the way training masks are spoiled (patches of specks, a hole in the ball, a bite out of it) were chosen after looking at these pictures. All of them are of one ball on one desk in one room, with the camera's exposure on automatic, and the arm was still for every one.
+
+## On the real arm, once
+
+`run --camera look --eye`, 2026-11-26, from a working copy of this code a few minutes older than the commit: from the look pose the eye was 1.00 sure, the arm turned 2 degrees, the eye was 0.99 sure again and put the ball 20.5 cm from the swivel axis, and the policy picked it up under the speed limits: by the arm's own readings the gripper closed at 2.3 s and the fingers stayed on the ball to the end. Up to the grasp the real arm and the simulated one were within a millimetre of each other. One attempt, one place; not a success rate. The recording is local data and is not in this repository.
+
+Two things in that recording differ from simulation and matter for what comes next. The wrist stopped bending back at 10 degrees, where the simulated arm goes on to 97 and the policy asks for it on every lift; whether the camera, its cable or a limit stored in the servo stops it is not yet known. And lifting, the arm swung 41 degrees to the right of where it faced, against 34 for the same ball in simulation. In simulation, with the wrist stopped at 10 degrees (`scripts/mujoco_carry.py --wrist_stop_deg=-10`, 150 attempts), the lift rate, the swing and the carry to a bowl were unchanged (98% lifted, 42 degrees at the worst, every lifted ball in the bowl) and only the pose the pickup ends in was higher.
 
 ## What the filter passes on real pictures
 

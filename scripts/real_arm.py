@@ -551,7 +551,8 @@ def cmd_run(args) -> None:
         if args.dry_run:
             raise SystemExit(f"a dry run does not pick anything up, so there is nothing to carry; leave out {option}")
         if args.ball:
-            blocked = carry.in_the_way(place, args.ball, facing_rad=0.0)  # with --ball the arm faces straight ahead
+            # With --ball the arm faces straight ahead.
+            blocked = carry.in_the_way(place, args.ball, facing_rad=0.0, swing_right_rad=carry.REAL_ARM_SWING_RIGHT_RAD)
             if blocked:
                 raise SystemExit(f"{option}: {blocked}. Move the bowl or the ball; nothing was powered.")
     calibration = arm.Calibration.load(args.calibration)
@@ -672,7 +673,7 @@ def cmd_run(args) -> None:
                     raise SystemExit("found the ball; no pickup was attempted because --find_only was given.")
                 if place is not None:
                     seen_at = in_turned_frame((*facing.ball, 0.0), -facing.turn_rad)[:2]  # back in the arm's own frame
-                    blocked = carry.in_the_way(place, seen_at, facing.turn_rad)
+                    blocked = carry.in_the_way(place, seen_at, facing.turn_rad, carry.REAL_ARM_SWING_RIGHT_RAD)
                     if blocked:
                         raise SystemExit(f"stopped before the pickup: {blocked}. Move the bowl or the ball.")
                 if trained_driver is not None:

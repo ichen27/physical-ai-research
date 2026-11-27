@@ -156,6 +156,15 @@ class InTheWayTests(unittest.TestCase):
         self.assertIsNone(carry.in_the_way(left, ball_needing_turn(0)))
         self.assertIsNone(carry.in_the_way(left, ball_needing_turn(-20)))
 
+    def test_more_swing_can_be_allowed_for_as_the_real_arm_tool_does(self):
+        right = SetDown(math.radians(-80), 0.26, rim_m=0.065, opening_m=0.15)
+        ball = ball_needing_turn(8)
+        self.assertIsNone(carry.in_the_way(right, ball))  # clear of the simulated swing
+        self.assertIsNotNone(carry.in_the_way(right, ball, swing_right_rad=carry.REAL_ARM_SWING_RIGHT_RAD))  # not of the wider one
+        self.assertGreater(carry.REAL_ARM_SWING_RIGHT_RAD, carry.PICKUP_SWING_RIGHT_RAD)
+        # A bowl at the left is as clear as before: the swing is to the right.
+        self.assertIsNone(carry.in_the_way(BOWL, ball_needing_turn(-20), swing_right_rad=carry.REAL_ARM_SWING_RIGHT_RAD))
+
     def test_the_facing_can_be_given_when_the_arm_does_not_turn_to_the_ball(self):
         right = SetDown(math.radians(-60), 0.22, rim_m=0.065, opening_m=0.15)
         self.assertIsNotNone(carry.in_the_way(right, (0.2, 0.03), facing_rad=0.0))
