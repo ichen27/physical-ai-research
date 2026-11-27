@@ -169,7 +169,7 @@ Each with the evidence. "Measured" means in simulation or on saved real pictures
 
 ## Still unknown
 
-- **Whether putting the ball's colour right in the simulated pictures makes a colour-picture student recognise the real ball.** The repaint test says it should; that student is being trained. A student given a filtered picture instead already does: see [the mask beside grey](../2026-11-26-mask-and-grey/README.md), sure of the ball in 65 of 65 of the same real pictures.
+- ~~Whether putting the ball's colour right makes a student recognise the real ball.~~ It does, two ways. [Shown the simulated ball in the real camera's colour](../2026-11-26-real-ball-colour/README.md), a colour-picture student is sure of the real ball in 62 of 65 pictures and places it to 7.0 mm; [given a filtered picture](../2026-11-26-mask-and-grey/README.md), 65 of 65 and 8.1 mm.
 - **Why this run learnt more slowly than the one before it.** One run of each.
 - **Anything about the real arm in motion:** the picture's real delay, the rolling shutter, blur that depends on distance (the lens is fixed-focus and near), and whether the student closes the loop on real pictures at all. Every real picture here was taken with the arm still.
 - **One desk, one room, one ball.** All 65 real pictures.
@@ -181,9 +181,9 @@ Alike, by measurement: where the ball appears and how large; haze; glare; clutte
 
 ## Is stage B worth paying for?
 
-On this evidence, not yet for the reason first given. Stage B was proposed for a ray-traced camera, on the expectation that picture quality would be the gap. The gap that was found is one colour, and it was found and can be closed for nothing. Geometry, clutter and glare already carry over from a plain renderer.
+On this evidence, not for the reason first given. Stage B was proposed for a ray-traced camera, on the expectation that picture quality would be the gap. The gap that was found is one colour, and it has since been closed for nothing, twice over. Geometry, clutter and glare already carry over from a plain renderer.
 
-What stage B would buy is different: a teacher trained with the real arm's speed limits (item 7), which the Mac cannot train; and the same picture work done at a scale where precision of a few millimetres is realistic. Before paying for either, three free things should be settled: whether the colour fix makes a student recognise the real ball (running now); whether the camera's exposure can be fixed (at the arm, with the author); and a clean real check of the arm's own accuracy with the camera, by finding a ball and touching it.
+What stage B would buy is different: a teacher trained with the real arm's speed limits (item 7), which the Mac cannot train; and the same picture work done at a scale where precision of a few millimetres is realistic. Before paying for either, the free things left are at the arm: how late the live stream's pictures are; a clean check of the arm's own accuracy with the camera, by finding a ball and touching it; what stops the wrist; and whether the camera's exposure can be fixed.
 
 ## Reproducing
 

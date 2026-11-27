@@ -84,9 +84,14 @@ class Calibrated:
         self.known = {path.name: (s, fit.places[numbers.index(s.place)]) for path, s in self.pairs}
 
 
-def check_all(brain: student.Brain, samples: Path, calibrated: Calibrated) -> dict:
+def folders(samples: Path, sets: list[str] | None) -> list[Path]:
+    """The picture sets to use: those named, or every sub-folder."""
+    return sorted(p for p in samples.iterdir() if p.is_dir() and (not sets or p.name in sets))
+
+
+def check_all(brain: student.Brain, samples: Path, calibrated: Calibrated, sets: list[str] | None = None) -> dict:
     rows = []
-    for folder in sorted(p for p in samples.iterdir() if p.is_dir()):
+    for folder in folders(samples, sets):
         for path in sorted(folder.glob("*.jpg")):
             image = vision.decode(path.read_bytes())
             if whole_ball(image, calibrated.colour) is None:
@@ -116,12 +121,12 @@ def check_all(brain: student.Brain, samples: Path, calibrated: Calibrated) -> di
     }
 
 
-def check_colour(notes: dict, samples: Path, calibrated: Calibrated, looks: int = 300) -> dict:
+def check_colour(notes: dict, samples: Path, calibrated: Calibrated, looks: int = 300, sets: list[str] | None = None) -> dict:
     from understudy import dagger
     from understudy.camera_model import WristCamera
 
     per_set, every = {}, []
-    for folder in sorted(p for p in samples.iterdir() if p.is_dir()):
+    for folder in folders(samples, sets):
         found = []
         for path in sorted(folder.glob("*.jpg")):
             image = vision.decode(path.read_bytes())
@@ -225,15 +230,17 @@ def main() -> None:
     parser.add_argument("--student", required=True)
     parser.add_argument("--samples", required=True, help="The folder of real picture sets, one sub-folder per session.")
     parser.add_argument("--calibrated", required=True, help="The sub-folder that holds a real camera calibration's files.")
+    parser.add_argument("--sets", nargs="+", help="Use only these sub-folders (default: all of them). Where a picture's pose was not "
+                        "recorded the start pose is assumed, so leave out sets taken from another pose.")
     parser.add_argument("--output", help="Write the results to this JSON file.")
     args = parser.parse_args()
     net, notes = student.load(args.student)
     samples = Path(args.samples).expanduser()
     calibrated = Calibrated(samples / args.calibrated)
     if args.check == "all":
-        result = check_all(student.Brain(net), samples, calibrated)
+        result = check_all(student.Brain(net), samples, calibrated, args.sets)
     elif args.check == "colour":
-        result = check_colour(notes, samples, calibrated)
+        result = check_colour(notes, samples, calibrated, sets=args.sets)
     else:
         result = check_changes(student.Brain(net), calibrated)
     result = {"check": args.check, "student": Path(args.student).name, "student_input": getattr(net, "input", "colour"), **result}
