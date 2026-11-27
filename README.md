@@ -243,6 +243,12 @@ I tried two fixes at the same time:
 
 ![A simulated attempt through the wrist camera, beside the filter's mask](docs/media/student-view-simulated.gif)
 
+And the same filter on a picture from the real camera:
+
+<img src="docs/media/real-look-and-filter.png" alt="Left: the real wrist camera's picture from above a cluttered desk, with the orange ball near the top. Right: the filter's mask of it, a white disc where the ball is and scattered white specks elsewhere" width="780">
+
+*Figure 5. A real picture from the look pose (26 November) and what the filter makes of it. The ball becomes a clean disc. The specks are other things on the desk that pass the same colour test, which is why the mask-alone student is the easiest of the three to fool (Table 2).*
+
 That gave three students, trained the same way from the same starting point, that differ **only in what they are shown**:
 
 | Student | What it is shown |
@@ -256,14 +262,14 @@ That gave three students, trained the same way from the same starting point, tha
   <img src="docs/figures/real-pictures.png" alt="Two bar charts over five students: pictures where the student was sure of the real ball rose from 3 and 18 to 62, 65 and 65 of 65; median position error fell from 36.3 mm to between 7 and 8.1 mm" width="900">
 </picture>
 
-*Figure 5. Five students on the same 65 real pictures. Position error is over the 19 pictures where the ball's place is known. The two grey bars are the students from before the colour was understood.*
+*Figure 6. Five students on the same 65 real pictures. Position error is over the 19 pictures where the ball's place is known. The two grey bars are the students from before the colour was understood.*
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/three-students-dark.png">
   <img src="docs/figures/three-students.png" alt="Three small bar charts comparing the colour, mask plus grey and mask alone students: lifting with their own moves 87.5, 95.5, 94.0 percent; searching 83.0, 81.0, 84.5 percent; false pickups with no ball 2.7, 7.3, 12.7 percent" width="900">
 </picture>
 
-*Figure 6. The three students in simulation, 200 attempts per bar (150 for the no-ball searches).*
+*Figure 7. The three students in simulation, 200 attempts per bar (150 for the no-ball searches).*
 
 | | Colour | Mask beside grey | Mask alone |
 | --- | --- | --- | --- |
@@ -276,7 +282,7 @@ That gave three students, trained the same way from the same starting point, tha
 | Real pictures: median position error | 7.0 mm | 8.1 mm | 8.0 mm |
 | Real pictures: worst position error | 11.9 mm | 24.0 mm | 19.9 mm |
 
-*Table 2. The numbers behind Figures 5 and 6.*
+*Table 2. The numbers behind Figures 6 and 7.*
 
 What I take from this:
 
@@ -300,7 +306,7 @@ But driving from video only works if the pictures are fresh:
   <img src="docs/figures/picture-lateness.png" alt="Bar chart: lifted 95.5% with pictures on time, 92.9% at 100 ms late, 87.7% at 200 ms, 50.3% at 300 ms; the one-look route is 78.0%" width="640">
 </picture>
 
-*Figure 7. The mask-beside-grey student driving itself in simulation, by how late each picture arrives. It was trained on pictures up to 100 ms late.*
+*Figure 8. The mask-beside-grey student driving itself in simulation, by how late each picture arrives. It was trained on pictures up to 100 ms late.*
 
 The student has no way of noticing that its pictures are late, so the delay of the real camera has to be measured before trusting it. I have a tool for that (`scripts/stream_lateness.py`) and have not run it yet.
 
@@ -313,7 +319,7 @@ Everything above is simulation or saved pictures. This section is the real arm. 
   <img src="docs/figures/real-arm-runs.png" alt="Dot chart of real runs by ball distance: one pickup with the position typed in; with the trained eye, two misses at 16.9 and 17.6 cm and four pickups from 19.5 to 23.4 cm; with the student driving, two pickups at 22 cm, one stop at 23.7 cm and three refusals near 25 cm" width="760">
 </picture>
 
-*Figure 8. Every recorded real-arm run in which the arm saw a ball. The shaded band is where the arm is willing to try.*
+*Figure 9. Every recorded real-arm run in which the arm saw a ball. The shaded band is where the arm is willing to try.*
 
 | How the arm knew where the ball was | Model | Pickups attempted | Lifted and held |
 | --- | --- | --- | --- |
@@ -330,7 +336,13 @@ The first time a student drove the real arm, it picked the ball up:
   <img src="docs/figures/real-live-run.png" alt="Two line charts over 15 seconds: the gripper tip descends to the desk by 2.5 seconds, then rises to about 15 cm from 7 seconds on; the finger angle drops from open to about 0.15 rad at 2.5 seconds and stays there" width="680">
 </picture>
 
-*Figure 9. The recording of that run (27 November, 01:11). The gripper comes down, closes at 2.5 s, and the fingers stay stopped at 0.15 rad for the rest of the run, which means something is between them, while the tip rises to about 15 cm.*
+*Figure 10. The recording of that run (27 November, 01:11). The gripper comes down, closes at 2.5 s, and the fingers stay stopped at 0.15 rad for the rest of the run, which means something is between them, while the tip rises to about 15 cm.*
+
+This is what the student was shown during that run, and what the filter made of it:
+
+![The real wrist camera's pictures during the first pickup a student drove, beside the filter's mask of each](docs/media/real-student-view.gif)
+
+*The same run through the wrist camera, at real speed: the 150 pictures that arrived in 15 seconds, at the 128 by 72 size the student gets. The ball is found and grasped while it is orange. From about 5 s, with the ball held right in front of the lens, the picture turns blue-green and the ball pink, the filter loses it, and the student's sureness falls from 1.00 to 0.00 while it goes on holding.*
 
 What the recordings say beyond the counts:
 
@@ -338,10 +350,11 @@ What the recordings say beyond the counts:
 - **In both misses the arm went where it was told** and closed on empty air. So the suspect is the position it was given, or a few millimetres of error in the arm's own geometry when it is folded in close. A direct check (find the ball, then touch it with the gripper) is still to do.
 - **The student's far limit on the real arm is the camera's view, and the slow video.** From the lowered start pose a ball at 23.7 cm is mostly out of the picture (in simulation about 38% of it shows, against 89% at 22 cm). The student was 0% sure on every step and stopped itself after 0.6 s, which is the stop rule working. In simulation this does not end the attempt: the arm moves, the ball comes into view inside those 20 steps, and the mask-beside-grey student lifted 28 of 28 balls between 23.2 and 24.9 cm (the mask-alone student, which is the one that ran here, was not tried on that set). On the real arm 20 steps is only six or seven pictures, so the likeliest reading is that the view did not catch up in time. That is an inference; the pictures from that run were not kept.
 - **The live video arrived at 10 pictures a second, not the 30 the student was trained on.** It picked the ball up twice anyway.
+- **The student stops recognising the ball once it is holding it.** In the run above its sureness is 0.00 from 6 to 9 s and averages 0.34 after that, because the picture's colours shift (most likely the camera rebalancing its colours when the ball fills the view; I have not tested that). Nothing in simulation does this. It did not matter here, because the stop rule only applies while the gripper is open and the lift does not need the ball in view. It may matter for anything the arm has to do with the ball after picking it up.
 - **The gripper pushes about 2 cm "into" the desk** by the arm's own readings, in the teacher's runs and the student's. The teacher asks for that in simulation too, where the desk is rigid. On the real arm something gives.
 - **The wrist stops bending back at about 10 degrees** on every lift; in simulation it goes to 97. I do not yet know whether the camera, its cable or the joint stops it.
 
-There is no video of the real arm yet, and the pictures the camera took during these runs are not in this repository.
+There is no video of the real arm from the outside yet. Of the pictures the camera took during these runs, only the two shown in this README are in the repository.
 
 ## 8. What went wrong, and what I learned
 
@@ -457,6 +470,7 @@ Each folder has its own write-up with every number, the exact commands, and the 
 | `results/pickup/2026-11-24-varied/mujoco-pickup.mp4` | The second policy losing the ball in MuJoCo |
 | `results/carry/2026-11-26-bowl/mujoco-pickup-and-carry-to-bowl.mp4` | Pickup and carry to the bowl, at real speed |
 | `docs/media/*.gif` | The animations shown in this README, made from those videos and from a saved simulated attempt |
+| `docs/media/real-look-and-filter.png`, `docs/media/real-student-view.gif` | A real wrist-camera picture and the pictures from the first student-driven pickup, each beside the filter's mask. Drawn by `docs/media/make_real_media.py` from pictures that are not in the repository |
 | `docs/figures/*.png` | The charts in this README (light and dark versions), drawn by `docs/figures/make_figures.py` |
 
 ### Code
