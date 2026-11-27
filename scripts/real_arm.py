@@ -580,7 +580,8 @@ def cmd_run(args) -> None:
         if args.camera == "live":
             # Before the arm is powered, so that a camera macOS will not open costs nothing.
             try:
-                live = LiveCamera(ffmpeg=args.ffmpeg, full_width=wrist.width if wrist is not None else 1280)
+                live = LiveCamera(ffmpeg=args.ffmpeg, full_width=wrist.width if wrist is not None else 1280,
+                                  capture=tuple(args.stream_capture) if args.stream_capture else None)
                 live.wait_for_first()
             except CameraError as error:
                 raise SystemExit(str(error)) from None
@@ -893,6 +894,10 @@ def main() -> None:
                      help="After the pickup, carry the ball to this place on the bare desk and put it down: degrees round "
                      "from straight ahead (positive to the arm's left, up to 90 either way) and centimetres from the swivel "
                      "axis. Off unless given.")
+    run.add_argument("--stream_capture", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
+                     help="For --camera live: ask the camera itself for pictures of this size, which must be 16 by 9. At its full "
+                     "1280 x 720 the first arm's camera gives ten pictures a second; measure a smaller size with "
+                     "scripts/stream_lateness.py before using it here.")
     run.add_argument("--driver", help="With --camera live: a trained student (an .onnx file from scripts/export_eye.py --driver, with "
                      "its .json beside it) that moves the arm itself from the camera's pictures, thirty times a second, in place "
                      "of the policy that is told where the ball is. The same speed and lead limits apply. It finds the ball "

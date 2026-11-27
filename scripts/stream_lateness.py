@@ -141,6 +141,9 @@ def main() -> None:
     parser.add_argument("--port", required=True, help="The arm's serial port.")
     parser.add_argument("--ffmpeg", default=str(Path.home() / "understudy-camera" / "ffmpeg"), help="As for real_arm.py run --camera live.")
     parser.add_argument("--seconds", type=float, default=20.0, help="How long the recording lasts.")
+    parser.add_argument("--capture", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
+                        help="Ask the camera itself for pictures of this size (default: its full 1280 x 720, at which the first "
+                        "arm's camera gives ten a second). It must be the same 16 by 9 shape.")
     parser.add_argument("--low_delay", action="store_true",
                         help="Ask ffmpeg not to hold pictures back (no input buffering, no probing), to see what that is worth. "
                         "run --camera live does not do this yet.")
@@ -161,7 +164,8 @@ def main() -> None:
             raise SystemExit(f"torque is on for servos {powered}; this needs the arm limp. Nothing was changed.")
         try:
             # The same stream, with the same settings, as run --camera live, unless --low_delay is given.
-            live = LiveCamera(ffmpeg=args.ffmpeg, input_options=LiveCamera.LOW_DELAY if args.low_delay else ())
+            live = LiveCamera(ffmpeg=args.ffmpeg, input_options=LiveCamera.LOW_DELAY if args.low_delay else (),
+                              capture=tuple(args.capture) if args.capture else None)
             live.wait_for_first()
         except CameraError as error:
             raise SystemExit(str(error)) from None

@@ -206,7 +206,7 @@ class ToolWithCameraTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, camera="look", target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
+            **{"any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None, "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, "stream_capture": None, **extra},
         )
         return out, json.loads((self.bench.folder / "run.json").read_text()) if "steps recorded" in out else None
 
@@ -384,7 +384,7 @@ class ToolWithTrainedEyeTests(unittest.TestCase):
             self.tool, self.tool.cmd_run, policy=str(POLICY), ball=None, target=[0.19, 0.0, 0.13],
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(self.bench.folder / "run.json"),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
-            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
+            **{"camera": "look", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": str(EYE), "driver": None, "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, "stream_capture": None, **extra},
         )
         return out
 
@@ -617,7 +617,7 @@ class ToolWithStudentDrivingTests(unittest.TestCase):
             seconds=15.0, max_speed=0.3, max_lead=0.05, hold_seconds=0.0, log=str(log),
             dry_run=False, camera_latency_steps=3, ffmpeg="ffmpeg",
             **{"camera": "live", "any_distance": False, "find_only": False, "set_down": None, "bowl": None, "eye": None,
-               "driver": str(DRIVER), "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, **extra},
+               "driver": str(DRIVER), "sweep_deg": 57.0, "eye_must_agree": False, "compare_finders": False, "stream_capture": None, **extra},
         )
         return out, json.loads(log.read_text()) if log.exists() else None
 

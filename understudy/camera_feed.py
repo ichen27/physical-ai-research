@@ -109,19 +109,27 @@ class LiveCamera:
     ``command`` produces raw blue-green-red pictures of ``width`` by ``height``
     on its standard output; by default it is ``ffmpeg`` reading the arm's
     camera by name. ``full_width`` is the camera's own picture width, which
-    positions are reported in whatever size the stream is.
+    positions are reported in whatever size the stream is. ``capture`` is the
+    size the camera itself is asked for (by default its full size): at its full
+    size, uncompressed, the first arm's camera gives only ten pictures a second.
+    A smaller size must have the same shape, or the view is a different one.
     """
 
     # Options that ask ffmpeg not to hold pictures back. Not yet the default: their effect on this camera is unmeasured.
     LOW_DELAY = ("-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0")
 
     def __init__(self, width: int = 640, height: int = 360, full_width: int = 1280, ffmpeg: str = "ffmpeg",
-                 command: list[str] | None = None, input_options: Sequence[str] = ()):
+                 command: list[str] | None = None, input_options: Sequence[str] = (),
+                 capture: tuple[int, int] | None = None):
         if command is None:
             name = find_camera(ffmpeg)
+            capture = capture or (full_width, full_width * height // width)
+            if capture[0] * height != capture[1] * width:
+                raise CameraError(f"a capture size of {capture[0]} x {capture[1]} is not the shape of the {width} x {height} "
+                                  "pictures asked for: the camera would show a different view")
             command = [
                 ffmpeg, "-hide_banner", "-loglevel", "error", *input_options, "-f", "avfoundation", "-pixel_format", "uyvy422",
-                "-framerate", "30", "-video_size", f"{full_width}x{full_width * height // width}", "-i", f"{name}:none",
+                "-framerate", "30", "-video_size", f"{capture[0]}x{capture[1]}", "-i", f"{name}:none",
                 "-vf", f"scale={width}:{height}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-",
             ]
         self.width, self.height = width, height
